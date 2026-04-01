@@ -99,6 +99,36 @@ describe("loadFixtureFile", () => {
     expect(fixtures[0].match.userMessage).toBe("hello world");
   });
 
+  it("loads inputText match field from JSON", () => {
+    const filePath = writeJson(tmpDir, "embed.json", {
+      fixtures: [
+        {
+          match: { inputText: "hello world" },
+          response: { embedding: [0.1, -0.2, 0.3] },
+        },
+      ],
+    });
+
+    const fixtures = loadFixtureFile(filePath);
+    expect(fixtures).toHaveLength(1);
+    expect(fixtures[0].match.inputText).toBe("hello world");
+  });
+
+  it("loads responseFormat match field from JSON", () => {
+    const filePath = writeJson(tmpDir, "json-mode.json", {
+      fixtures: [
+        {
+          match: { userMessage: "give json", responseFormat: "json_object" },
+          response: { content: '{"key":"value"}' },
+        },
+      ],
+    });
+
+    const fixtures = loadFixtureFile(filePath);
+    expect(fixtures).toHaveLength(1);
+    expect(fixtures[0].match.responseFormat).toBe("json_object");
+  });
+
   it("omits latency and chunkSize when not present in JSON", () => {
     const filePath = writeJson(tmpDir, "no-optional.json", {
       fixtures: [
@@ -162,6 +192,72 @@ describe("loadFixtureFile", () => {
     expect(fixtures).toHaveLength(1);
     expect(fixtures[0].truncateAfterChunks).toBe(5);
     expect(fixtures[0].disconnectAfterMs).toBe(1000);
+  });
+
+  it("streamingProfile passthrough from JSON", () => {
+    const filePath = writeJson(tmpDir, "streaming-profile.json", {
+      fixtures: [
+        {
+          match: { userMessage: "profile" },
+          response: { content: "Hello!" },
+          streamingProfile: { ttft: 50, tps: 100, jitter: 0.1 },
+        },
+      ],
+    });
+
+    const fixtures = loadFixtureFile(filePath);
+    expect(fixtures).toHaveLength(1);
+    expect(fixtures[0].streamingProfile).toEqual({ ttft: 50, tps: 100, jitter: 0.1 });
+  });
+
+  it("chaos config passthrough from JSON", () => {
+    const filePath = writeJson(tmpDir, "chaos.json", {
+      fixtures: [
+        {
+          match: { userMessage: "chaos" },
+          response: { content: "Hello!" },
+          chaos: { dropRate: 0.5 },
+        },
+      ],
+    });
+
+    const fixtures = loadFixtureFile(filePath);
+    expect(fixtures).toHaveLength(1);
+    expect(fixtures[0].chaos).toEqual({ dropRate: 0.5 });
+  });
+
+  it("passes through sequenceIndex from JSON fixtures", () => {
+    const filePath = writeJson(tmpDir, "sequence.json", {
+      fixtures: [
+        {
+          match: { userMessage: "plan", sequenceIndex: 0 },
+          response: { content: "Step 1" },
+        },
+        {
+          match: { userMessage: "plan", sequenceIndex: 1 },
+          response: { content: "Step 2" },
+        },
+      ],
+    });
+
+    const fixtures = loadFixtureFile(filePath);
+    expect(fixtures).toHaveLength(2);
+    expect(fixtures[0].match.sequenceIndex).toBe(0);
+    expect(fixtures[1].match.sequenceIndex).toBe(1);
+  });
+
+  it("omits sequenceIndex when not present in JSON", () => {
+    const filePath = writeJson(tmpDir, "no-sequence.json", {
+      fixtures: [
+        {
+          match: { userMessage: "hello" },
+          response: { content: "Hi!" },
+        },
+      ],
+    });
+
+    const fixtures = loadFixtureFile(filePath);
+    expect(fixtures[0].match.sequenceIndex).toBeUndefined();
   });
 
   it("omits truncateAfterChunks and disconnectAfterMs when not present in JSON", () => {
@@ -422,5 +518,330 @@ describe("fixture-loader fs error paths", () => {
     );
     expect(statWarns).toHaveLength(1);
     expect(statWarns[0][0]).toContain("noperm.json");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateFixtures
+// ---------------------------------------------------------------------------
+
+import { validateFixtures } from "../fixture-loader.js";
+import type { Fixture } from "../types.js";
+
+function makeFixture(overrides: Partial<Fixture> = {}): Fixture {
+  return {
+    match: { userMessage: "test" },
+    response: { content: "Hello" },
+    ...overrides,
+  };
+}
+
+describe("validateFixtures", () => {
+  it("returns no results for valid fixtures", () => {
+    const fixtures = [
+      makeFixture({ match: { userMessage: "hello" } }),
+      makeFixture({
+        match: { userMessage: "weather" },
+        response: { toolCalls: [{ name: "fn", arguments: "{}" }] },
+      }),
+      makeFixture({
+        match: { userMessage: "error" },
+        response: { error: { message: "err", type: "e" }, status: 500 },
+      }),
+    ];
+    expect(validateFixtures(fixtures)).toEqual([]);
+  });
+
+  // --- Error checks ---
+
+  it("error: unrecognized response type", () => {
+    const fixtures = [makeFixture({ response: { foo: "bar" } as never })];
+    const results = validateFixtures(fixtures);
+    expect(results).toHaveLength(1);
+    expect(results[0].severity).toBe("error");
+    expect(results[0].message).toContain("not a recognized type");
+  });
+
+  it("error: empty content string", () => {
+    const fixtures = [makeFixture({ response: { content: "" } })];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "error" && r.message.includes("empty string"))).toBe(
+      true,
+    );
+  });
+
+  it("warning: empty toolCalls array", () => {
+    const fixtures = [makeFixture({ response: { toolCalls: [] } })];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "warning" && r.message.includes("empty"))).toBe(true);
+  });
+
+  it("error: toolCalls with empty name", () => {
+    const fixtures = [makeFixture({ response: { toolCalls: [{ name: "", arguments: "{}" }] } })];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "error" && r.message.includes("name is empty"))).toBe(
+      true,
+    );
+  });
+
+  it("error: toolCalls with invalid JSON arguments", () => {
+    const fixtures = [
+      makeFixture({ response: { toolCalls: [{ name: "fn", arguments: "not json" }] } }),
+    ];
+    const results = validateFixtures(fixtures);
+    expect(
+      results.some((r) => r.severity === "error" && r.message.includes("not valid JSON")),
+    ).toBe(true);
+  });
+
+  it("error: error response with empty message", () => {
+    const fixtures = [
+      makeFixture({ response: { error: { message: "", type: "e" }, status: 500 } }),
+    ];
+    const results = validateFixtures(fixtures);
+    expect(
+      results.some((r) => r.severity === "error" && r.message.includes("error.message is empty")),
+    ).toBe(true);
+  });
+
+  it("error: error response with invalid status code", () => {
+    const fixtures = [
+      makeFixture({ response: { error: { message: "err", type: "e" }, status: 999 } }),
+    ];
+    const results = validateFixtures(fixtures);
+    expect(
+      results.some((r) => r.severity === "error" && r.message.includes("not a valid HTTP status")),
+    ).toBe(true);
+  });
+
+  it("accepts status code at lower boundary (100)", () => {
+    const fixtures = [
+      makeFixture({ response: { error: { message: "err", type: "e" }, status: 100 } }),
+    ];
+    const results = validateFixtures(fixtures);
+    const statusErrors = results.filter(
+      (r) => r.severity === "error" && r.message.includes("not a valid HTTP status"),
+    );
+    expect(statusErrors).toHaveLength(0);
+  });
+
+  it("rejects status code below lower boundary (99)", () => {
+    const fixtures = [
+      makeFixture({ response: { error: { message: "err", type: "e" }, status: 99 } }),
+    ];
+    const results = validateFixtures(fixtures);
+    expect(
+      results.some((r) => r.severity === "error" && r.message.includes("not a valid HTTP status")),
+    ).toBe(true);
+  });
+
+  it("accepts status code at upper boundary (599)", () => {
+    const fixtures = [
+      makeFixture({ response: { error: { message: "err", type: "e" }, status: 599 } }),
+    ];
+    const results = validateFixtures(fixtures);
+    const statusErrors = results.filter(
+      (r) => r.severity === "error" && r.message.includes("not a valid HTTP status"),
+    );
+    expect(statusErrors).toHaveLength(0);
+  });
+
+  it("error status accepted when omitted (defaults to 500 at runtime)", () => {
+    const fixtures = [makeFixture({ response: { error: { message: "err", type: "e" } } })];
+    const results = validateFixtures(fixtures);
+    const statusErrors = results.filter(
+      (r) => r.severity === "error" && r.message.includes("not a valid HTTP status"),
+    );
+    expect(statusErrors).toHaveLength(0);
+  });
+
+  it("error: negative latency", () => {
+    const fixtures = [makeFixture({ latency: -1 })];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "error" && r.message.includes("latency"))).toBe(true);
+  });
+
+  it("error: chunkSize < 1", () => {
+    const fixtures = [makeFixture({ chunkSize: 0 })];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "error" && r.message.includes("chunkSize"))).toBe(
+      true,
+    );
+  });
+
+  it("error: truncateAfterChunks < 1", () => {
+    const fixtures = [makeFixture({ truncateAfterChunks: 0 })];
+    const results = validateFixtures(fixtures);
+    expect(
+      results.some((r) => r.severity === "error" && r.message.includes("truncateAfterChunks")),
+    ).toBe(true);
+  });
+
+  it("error: negative disconnectAfterMs", () => {
+    const fixtures = [makeFixture({ disconnectAfterMs: -1 })];
+    const results = validateFixtures(fixtures);
+    expect(
+      results.some((r) => r.severity === "error" && r.message.includes("disconnectAfterMs")),
+    ).toBe(true);
+  });
+
+  it("error: streamingProfile.ttft is negative", () => {
+    const fixtures = [makeFixture({ streamingProfile: { ttft: -1 } })];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "error" && r.message.includes("ttft"))).toBe(true);
+  });
+
+  it("no error: streamingProfile.ttft is 0", () => {
+    const fixtures = [makeFixture({ streamingProfile: { ttft: 0 } })];
+    const results = validateFixtures(fixtures);
+    expect(results.filter((r) => r.message.includes("ttft"))).toHaveLength(0);
+  });
+
+  it("error: streamingProfile.tps is 0", () => {
+    const fixtures = [makeFixture({ streamingProfile: { tps: 0 } })];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "error" && r.message.includes("tps"))).toBe(true);
+  });
+
+  it("error: streamingProfile.tps is negative", () => {
+    const fixtures = [makeFixture({ streamingProfile: { tps: -5 } })];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "error" && r.message.includes("tps"))).toBe(true);
+  });
+
+  it("error: streamingProfile.jitter is negative", () => {
+    const fixtures = [makeFixture({ streamingProfile: { jitter: -0.1 } })];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "error" && r.message.includes("jitter"))).toBe(true);
+  });
+
+  it("error: streamingProfile.jitter is > 1", () => {
+    const fixtures = [makeFixture({ streamingProfile: { jitter: 1.5 } })];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "error" && r.message.includes("jitter"))).toBe(true);
+  });
+
+  it("no error: streamingProfile with valid values", () => {
+    const fixtures = [makeFixture({ streamingProfile: { ttft: 100, tps: 50, jitter: 0.1 } })];
+    expect(validateFixtures(fixtures)).toHaveLength(0);
+  });
+
+  it("error: chaos.dropRate is > 1", () => {
+    const fixtures = [makeFixture({ chaos: { dropRate: 1.5 } })];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "error" && r.message.includes("dropRate"))).toBe(
+      true,
+    );
+  });
+
+  it("error: chaos.dropRate is negative", () => {
+    const fixtures = [makeFixture({ chaos: { dropRate: -0.1 } })];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "error" && r.message.includes("dropRate"))).toBe(
+      true,
+    );
+  });
+
+  it("error: chaos.malformedRate is > 1", () => {
+    const fixtures = [makeFixture({ chaos: { malformedRate: 2.0 } })];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "error" && r.message.includes("malformedRate"))).toBe(
+      true,
+    );
+  });
+
+  it("error: chaos.disconnectRate is > 1", () => {
+    const fixtures = [makeFixture({ chaos: { disconnectRate: 5.0 } })];
+    const results = validateFixtures(fixtures);
+    expect(
+      results.some((r) => r.severity === "error" && r.message.includes("disconnectRate")),
+    ).toBe(true);
+  });
+
+  it("no error: chaos with boundary values (0 and 1)", () => {
+    const fixtures = [
+      makeFixture({ chaos: { dropRate: 0, malformedRate: 1, disconnectRate: 0.5 } }),
+    ];
+    expect(validateFixtures(fixtures)).toHaveLength(0);
+  });
+
+  // --- Warning checks ---
+
+  it("warning: duplicate userMessage", () => {
+    const fixtures = [
+      makeFixture({ match: { userMessage: "hello" } }),
+      makeFixture({ match: { userMessage: "hello" } }),
+    ];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "warning" && r.message.includes("duplicate"))).toBe(
+      true,
+    );
+  });
+
+  it("warning: catch-all not in last position", () => {
+    const fixtures = [makeFixture({ match: {} }), makeFixture({ match: { userMessage: "hello" } })];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "warning" && r.message.includes("catch-all"))).toBe(
+      true,
+    );
+  });
+
+  it("no warning for catch-all in last position", () => {
+    const fixtures = [makeFixture({ match: { userMessage: "hello" } }), makeFixture({ match: {} })];
+    const results = validateFixtures(fixtures);
+    const catchAllWarnings = results.filter(
+      (r) => r.severity === "warning" && r.message.includes("catch-all"),
+    );
+    expect(catchAllWarnings).toHaveLength(0);
+  });
+
+  it("reports both errors and warnings together", () => {
+    const fixtures = [
+      makeFixture({ match: {}, response: { content: "" } }), // catch-all + empty content
+      makeFixture({ match: { userMessage: "hello" } }),
+    ];
+    const results = validateFixtures(fixtures);
+    const errors = results.filter((r) => r.severity === "error");
+    const warnings = results.filter((r) => r.severity === "warning");
+    expect(errors.length).toBeGreaterThan(0);
+    expect(warnings.length).toBeGreaterThan(0);
+  });
+
+  // --- Embedding response checks ---
+
+  it("returns no results for a valid embedding fixture", () => {
+    const fixtures = [
+      makeFixture({
+        match: { inputText: "hello" },
+        response: { embedding: [0.1, -0.2, 0.3] },
+      }),
+    ];
+    expect(validateFixtures(fixtures)).toEqual([]);
+  });
+
+  it("error: empty embedding array", () => {
+    const fixtures = [
+      makeFixture({
+        match: { inputText: "hello" },
+        response: { embedding: [] },
+      }),
+    ];
+    const results = validateFixtures(fixtures);
+    expect(
+      results.some((r) => r.severity === "error" && r.message.includes("embedding array is empty")),
+    ).toBe(true);
+  });
+
+  it("error: non-number embedding elements", () => {
+    const fixtures = [
+      makeFixture({
+        match: { inputText: "hello" },
+        response: { embedding: [0.1, "bad" as unknown as number, 0.3] },
+      }),
+    ];
+    const results = validateFixtures(fixtures);
+    expect(results.some((r) => r.severity === "error" && r.message.includes("not a number"))).toBe(
+      true,
+    );
   });
 });

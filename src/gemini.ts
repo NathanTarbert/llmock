@@ -11,6 +11,9 @@ import type {
   ChatCompletionRequest,
   ChatMessage,
   Fixture,
+  HandlerDefaults,
+  RecordProviderKey,
+  StreamingProfile,
   ToolCall,
   ToolDefinition,
 } from "./types.js";
@@ -19,11 +22,15 @@ import {
   isToolCallResponse,
   isErrorResponse,
   generateToolCallId,
+  flattenHeaders,
 } from "./helpers.js";
 import { matchFixture } from "./router.js";
-import { writeErrorResponse, delay } from "./sse-writer.js";
+import { writeErrorResponse, delay, calculateDelay } from "./sse-writer.js";
 import { createInterruptionSignal } from "./interruption.js";
 import type { Journal } from "./journal.js";
+import type { Logger } from "./logger.js";
+import { applyChaos } from "./chaos.js";
+import { proxyAndRecord } from "./recorder.js";
 
 // ─── Gemini request types ───────────────────────────────────────────────────
 
@@ -229,14 +236,17 @@ function buildGeminiTextStreamChunks(content: string, chunkSize: number): Gemini
   return chunks;
 }
 
-function buildGeminiToolCallStreamChunks(toolCalls: ToolCall[]): GeminiResponseChunk[] {
+function buildGeminiToolCallStreamChunks(
+  toolCalls: ToolCall[],
+  logger: Logger,
+): GeminiResponseChunk[] {
   const parts: GeminiPart[] = toolCalls.map((tc) => {
     let argsObj: Record<string, unknown>;
     try {
       argsObj = JSON.parse(tc.arguments || "{}") as Record<string, unknown>;
     } catch {
-      console.warn(
-        `[LLMock] Malformed JSON in fixture tool call arguments for "${tc.name}": ${tc.arguments}`,
+      logger.warn(
+        `Malformed JSON in fixture tool call arguments for "${tc.name}": ${tc.arguments}`,
       );
       argsObj = {};
     }
@@ -283,14 +293,14 @@ function buildGeminiTextResponse(content: string): GeminiResponseChunk {
   };
 }
 
-function buildGeminiToolCallResponse(toolCalls: ToolCall[]): GeminiResponseChunk {
+function buildGeminiToolCallResponse(toolCalls: ToolCall[], logger: Logger): GeminiResponseChunk {
   const parts: GeminiPart[] = toolCalls.map((tc) => {
     let argsObj: Record<string, unknown>;
     try {
       argsObj = JSON.parse(tc.arguments || "{}") as Record<string, unknown>;
     } catch {
-      console.warn(
-        `[LLMock] Malformed JSON in fixture tool call arguments for "${tc.name}": ${tc.arguments}`,
+      logger.warn(
+        `Malformed JSON in fixture tool call arguments for "${tc.name}": ${tc.arguments}`,
       );
       argsObj = {};
     }
@@ -319,6 +329,7 @@ function buildGeminiToolCallResponse(toolCalls: ToolCall[]): GeminiResponseChunk
 
 interface GeminiStreamOptions {
   latency?: number;
+  streamingProfile?: StreamingProfile;
   signal?: AbortSignal;
   onChunkSent?: () => void;
 }
@@ -331,6 +342,7 @@ async function writeGeminiSSEStream(
   const opts: GeminiStreamOptions =
     typeof optionsOrLatency === "number" ? { latency: optionsOrLatency } : (optionsOrLatency ?? {});
   const latency = opts.latency ?? 0;
+  const profile = opts.streamingProfile;
   const signal = opts.signal;
   const onChunkSent = opts.onChunkSent;
 
@@ -339,14 +351,17 @@ async function writeGeminiSSEStream(
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
+  let chunkIndex = 0;
   for (const chunk of chunks) {
-    if (latency > 0) await delay(latency, signal);
+    const chunkDelay = calculateDelay(chunkIndex, profile, latency);
+    if (chunkDelay > 0) await delay(chunkDelay, signal);
     if (signal?.aborted) return false;
     if (res.writableEnded) return true;
     // Gemini uses data-only SSE (no event: prefix, no [DONE])
     res.write(`data: ${JSON.stringify(chunk)}\n\n`);
     onChunkSent?.();
     if (signal?.aborted) return false;
+    chunkIndex++;
   }
 
   if (!res.writableEnded) {
@@ -365,15 +380,24 @@ export async function handleGemini(
   streaming: boolean,
   fixtures: Fixture[],
   journal: Journal,
-  defaults: { latency: number; chunkSize: number },
+  defaults: HandlerDefaults,
   setCorsHeaders: (res: http.ServerResponse) => void,
+  providerKey: RecordProviderKey = "gemini",
 ): Promise<void> {
+  const { logger } = defaults;
   setCorsHeaders(res);
 
   let geminiReq: GeminiRequest;
   try {
     geminiReq = JSON.parse(raw) as GeminiRequest;
   } catch {
+    journal.add({
+      method: req.method ?? "POST",
+      path: req.url ?? `/v1beta/models/${model}:generateContent`,
+      headers: flattenHeaders(req.headers),
+      body: null,
+      response: { status: 400, fixture: null },
+    });
     writeErrorResponse(
       res,
       400,
@@ -391,25 +415,77 @@ export async function handleGemini(
   // Convert to ChatCompletionRequest for fixture matching
   const completionReq = geminiToCompletionRequest(geminiReq, model, streaming);
 
-  const fixture = matchFixture(fixtures, completionReq);
+  const fixture = matchFixture(fixtures, completionReq, journal.fixtureMatchCounts);
   const path = req.url ?? `/v1beta/models/${model}:generateContent`;
 
+  if (fixture) {
+    journal.incrementFixtureMatchCount(fixture, fixtures);
+  }
+
+  if (
+    applyChaos(
+      res,
+      fixture,
+      defaults.chaos,
+      req.headers,
+      journal,
+      {
+        method: req.method ?? "POST",
+        path,
+        headers: flattenHeaders(req.headers),
+        body: completionReq,
+      },
+      defaults.registry,
+      defaults.logger,
+    )
+  )
+    return;
+
   if (!fixture) {
+    if (defaults.record) {
+      const proxied = await proxyAndRecord(
+        req,
+        res,
+        completionReq,
+        providerKey,
+        path,
+        fixtures,
+        defaults,
+        raw,
+      );
+      if (proxied) {
+        journal.add({
+          method: req.method ?? "POST",
+          path,
+          headers: flattenHeaders(req.headers),
+          body: completionReq,
+          response: { status: res.statusCode ?? 200, fixture: null },
+        });
+        return;
+      }
+    }
+    const strictStatus = defaults.strict ? 503 : 404;
+    const strictMessage = defaults.strict
+      ? "Strict mode: no fixture matched"
+      : "No fixture matched";
+    if (defaults.strict) {
+      logger.error(`STRICT: No fixture matched for ${req.method ?? "POST"} ${path}`);
+    }
     journal.add({
       method: req.method ?? "POST",
       path,
-      headers: {},
+      headers: flattenHeaders(req.headers),
       body: completionReq,
-      response: { status: 404, fixture: null },
+      response: { status: strictStatus, fixture: null },
     });
     writeErrorResponse(
       res,
-      404,
+      strictStatus,
       JSON.stringify({
         error: {
-          message: "No fixture matched",
-          code: 404,
-          status: "NOT_FOUND",
+          message: strictMessage,
+          code: strictStatus,
+          status: defaults.strict ? "UNAVAILABLE" : "NOT_FOUND",
         },
       }),
     );
@@ -426,11 +502,19 @@ export async function handleGemini(
     journal.add({
       method: req.method ?? "POST",
       path,
-      headers: {},
+      headers: flattenHeaders(req.headers),
       body: completionReq,
       response: { status, fixture },
     });
-    writeErrorResponse(res, status, JSON.stringify(response));
+    // Gemini-style error format: { error: { code, message, status } }
+    const geminiError = {
+      error: {
+        code: status,
+        message: response.error.message,
+        status: response.error.type ?? "ERROR",
+      },
+    };
+    writeErrorResponse(res, status, JSON.stringify(geminiError));
     return;
   }
 
@@ -439,7 +523,7 @@ export async function handleGemini(
     const journalEntry = journal.add({
       method: req.method ?? "POST",
       path,
-      headers: {},
+      headers: flattenHeaders(req.headers),
       body: completionReq,
       response: { status: 200, fixture },
     });
@@ -452,6 +536,7 @@ export async function handleGemini(
       const interruption = createInterruptionSignal(fixture);
       const completed = await writeGeminiSSEStream(res, chunks, {
         latency,
+        streamingProfile: fixture.streamingProfile,
         signal: interruption?.signal,
         onChunkSent: interruption?.tick,
       });
@@ -470,19 +555,20 @@ export async function handleGemini(
     const journalEntry = journal.add({
       method: req.method ?? "POST",
       path,
-      headers: {},
+      headers: flattenHeaders(req.headers),
       body: completionReq,
       response: { status: 200, fixture },
     });
     if (!streaming) {
-      const body = buildGeminiToolCallResponse(response.toolCalls);
+      const body = buildGeminiToolCallResponse(response.toolCalls, logger);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(body));
     } else {
-      const chunks = buildGeminiToolCallStreamChunks(response.toolCalls);
+      const chunks = buildGeminiToolCallStreamChunks(response.toolCalls, logger);
       const interruption = createInterruptionSignal(fixture);
       const completed = await writeGeminiSSEStream(res, chunks, {
         latency,
+        streamingProfile: fixture.streamingProfile,
         signal: interruption?.signal,
         onChunkSent: interruption?.tick,
       });
@@ -500,7 +586,7 @@ export async function handleGemini(
   journal.add({
     method: req.method ?? "POST",
     path,
-    headers: {},
+    headers: flattenHeaders(req.headers),
     body: completionReq,
     response: { status: 500, fixture },
   });

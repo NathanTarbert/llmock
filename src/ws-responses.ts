@@ -1,7 +1,7 @@
 /**
  * WebSocket handler for OpenAI Responses API.
  *
- * Accepts `{ type: "response.create", response: { ... } }` messages over
+ * Accepts `{ type: "response.create", model: "...", input: [...] }` messages over
  * WebSocket and sends back the same Responses API SSE events as the HTTP
  * handler, but as individual WebSocket text frames.
  */
@@ -18,29 +18,27 @@ import { isTextResponse, isToolCallResponse, isErrorResponse } from "./helpers.j
 import { createInterruptionSignal } from "./interruption.js";
 import { delay } from "./sse-writer.js";
 import type { Journal } from "./journal.js";
+import type { Logger } from "./logger.js";
 import type { WebSocketConnection } from "./ws-framing.js";
 
 interface ResponseCreateMessage {
   type: "response.create";
-  response: {
-    model?: string;
-    input?: unknown[];
-    instructions?: string;
-    tools?: unknown[];
-    tool_choice?: string | object;
-    stream?: boolean;
-    temperature?: number;
-    max_output_tokens?: number;
-    [key: string]: unknown;
-  };
+  model?: string;
+  input?: unknown[];
+  instructions?: string;
+  tools?: unknown[];
+  tool_choice?: string | object;
+  stream?: boolean;
+  temperature?: number;
+  max_output_tokens?: number;
+  [key: string]: unknown;
 }
 
 function isResponseCreateMessage(msg: unknown): msg is ResponseCreateMessage {
   return (
     typeof msg === "object" &&
     msg !== null &&
-    (msg as ResponseCreateMessage).type === "response.create" &&
-    typeof (msg as ResponseCreateMessage).response === "object"
+    (msg as ResponseCreateMessage).type === "response.create"
   );
 }
 
@@ -59,15 +57,16 @@ export function handleWebSocketResponses(
   ws: WebSocketConnection,
   fixtures: Fixture[],
   journal: Journal,
-  defaults: { latency: number; chunkSize: number; model: string },
+  defaults: { latency: number; chunkSize: number; model: string; logger: Logger; strict?: boolean },
 ): void {
+  const { logger } = defaults;
   // Serialize message processing to prevent event interleaving
   let pending = Promise.resolve();
   ws.on("message", (raw: string) => {
     pending = pending.then(() =>
       processMessage(raw, ws, fixtures, journal, defaults).catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "Internal error";
-        console.error(`[LLMock] WebSocket responses error: ${msg}`);
+        logger.error(`WebSocket responses error: ${msg}`);
         try {
           ws.send(JSON.stringify(buildErrorEvent(msg, "server_error")));
         } catch {
@@ -83,7 +82,7 @@ async function processMessage(
   ws: WebSocketConnection,
   fixtures: Fixture[],
   journal: Journal,
-  defaults: { latency: number; chunkSize: number; model: string },
+  defaults: { latency: number; chunkSize: number; model: string; logger: Logger; strict?: boolean },
 ): Promise<void> {
   let parsed: unknown;
   try {
@@ -108,10 +107,9 @@ async function processMessage(
     return;
   }
 
-  // The response body inside response.create maps to a ResponsesRequest
   const responsesReq = {
-    model: parsed.response.model ?? defaults.model,
-    input: (parsed.response.input ?? []) as {
+    model: parsed.model ?? defaults.model,
+    input: (parsed.input ?? []) as {
       role?: string;
       type?: string;
       content?: string | { type: string; text?: string }[];
@@ -121,8 +119,8 @@ async function processMessage(
       output?: string;
       id?: string;
     }[],
-    instructions: parsed.response.instructions,
-    tools: parsed.response.tools as
+    instructions: parsed.instructions,
+    tools: parsed.tools as
       | {
           type: "function";
           name: string;
@@ -131,16 +129,25 @@ async function processMessage(
           strict?: boolean;
         }[]
       | undefined,
-    tool_choice: parsed.response.tool_choice,
-    stream: parsed.response.stream,
-    temperature: parsed.response.temperature,
-    max_output_tokens: parsed.response.max_output_tokens,
+    tool_choice: parsed.tool_choice,
+    stream: parsed.stream,
+    temperature: parsed.temperature,
+    max_output_tokens: parsed.max_output_tokens,
   };
 
   const completionReq = responsesToCompletionRequest(responsesReq);
-  const fixture = matchFixture(fixtures, completionReq);
+  const fixture = matchFixture(fixtures, completionReq, journal.fixtureMatchCounts);
+
+  if (fixture) {
+    journal.incrementFixtureMatchCount(fixture, fixtures);
+  }
 
   if (!fixture) {
+    if (defaults.strict) {
+      defaults.logger.warn(`STRICT: No fixture matched for WebSocket message`);
+      ws.close(1008, "Strict mode: no fixture matched");
+      return;
+    }
     journal.add({
       method: "WS",
       path: "/v1/responses",

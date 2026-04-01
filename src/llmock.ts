@@ -1,4 +1,13 @@
-import type { Fixture, FixtureMatch, FixtureResponse, MockServerOptions } from "./types.js";
+import type {
+  ChaosConfig,
+  EmbeddingFixtureOpts,
+  Fixture,
+  FixtureMatch,
+  FixtureOpts,
+  FixtureResponse,
+  MockServerOptions,
+  RecordConfig,
+} from "./types.js";
 import { createServer, type ServerInstance } from "./server.js";
 import { loadFixtureFile, loadFixturesFromDir } from "./fixture-loader.js";
 import { Journal } from "./journal.js";
@@ -52,16 +61,7 @@ export class LLMock {
 
   // ---- Convenience ----
 
-  on(
-    match: FixtureMatch,
-    response: FixtureResponse,
-    opts?: {
-      latency?: number;
-      chunkSize?: number;
-      truncateAfterChunks?: number;
-      disconnectAfterMs?: number;
-    },
-  ): this {
+  on(match: FixtureMatch, response: FixtureResponse, opts?: FixtureOpts): this {
     return this.addFixture({
       match,
       response,
@@ -69,42 +69,28 @@ export class LLMock {
     });
   }
 
-  onMessage(
-    pattern: string | RegExp,
-    response: FixtureResponse,
-    opts?: {
-      latency?: number;
-      chunkSize?: number;
-      truncateAfterChunks?: number;
-      disconnectAfterMs?: number;
-    },
-  ): this {
+  onMessage(pattern: string | RegExp, response: FixtureResponse, opts?: FixtureOpts): this {
     return this.on({ userMessage: pattern }, response, opts);
   }
 
-  onToolCall(
-    name: string,
+  onEmbedding(
+    pattern: string | RegExp,
     response: FixtureResponse,
-    opts?: {
-      latency?: number;
-      chunkSize?: number;
-      truncateAfterChunks?: number;
-      disconnectAfterMs?: number;
-    },
+    opts?: EmbeddingFixtureOpts,
   ): this {
+    return this.on({ inputText: pattern }, response, opts);
+  }
+
+  onJsonOutput(pattern: string | RegExp, jsonContent: object | string, opts?: FixtureOpts): this {
+    const content = typeof jsonContent === "string" ? jsonContent : JSON.stringify(jsonContent);
+    return this.on({ userMessage: pattern, responseFormat: "json_object" }, { content }, opts);
+  }
+
+  onToolCall(name: string, response: FixtureResponse, opts?: FixtureOpts): this {
     return this.on({ toolName: name }, response, opts);
   }
 
-  onToolResult(
-    id: string,
-    response: FixtureResponse,
-    opts?: {
-      latency?: number;
-      chunkSize?: number;
-      truncateAfterChunks?: number;
-      disconnectAfterMs?: number;
-    },
-  ): this {
+  onToolResult(id: string, response: FixtureResponse, opts?: FixtureOpts): this {
     return this.on({ toolCallId: id }, response, opts);
   }
 
@@ -162,6 +148,37 @@ export class LLMock {
     this.journal.clear();
   }
 
+  resetMatchCounts(): this {
+    if (this.serverInstance) {
+      this.serverInstance.journal.clearMatchCounts();
+    }
+    return this;
+  }
+
+  // ---- Chaos ----
+
+  setChaos(config: ChaosConfig): this {
+    this.options.chaos = config;
+    return this;
+  }
+
+  clearChaos(): this {
+    delete this.options.chaos;
+    return this;
+  }
+
+  // ---- Recording ----
+
+  enableRecording(config: RecordConfig): this {
+    this.options.record = config;
+    return this;
+  }
+
+  disableRecording(): this {
+    delete this.options.record;
+    return this;
+  }
+
   // ---- Reset ----
 
   reset(): this {
@@ -188,7 +205,7 @@ export class LLMock {
     }
     const { server } = this.serverInstance;
     await new Promise<void>((resolve, reject) => {
-      server.close((err) => (err ? reject(err) : resolve()));
+      server.close((err: Error | undefined) => (err ? reject(err) : resolve()));
     });
     this.serverInstance = null;
   }

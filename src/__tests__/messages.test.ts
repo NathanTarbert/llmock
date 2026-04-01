@@ -358,6 +358,7 @@ describe("POST /v1/messages (streaming)", () => {
       model: "claude-3-5-sonnet-20241022",
       max_tokens: 1024,
       messages: [{ role: "user", content: "hello" }],
+      stream: true,
     });
 
     expect(res.status).toBe(200);
@@ -383,6 +384,7 @@ describe("POST /v1/messages (streaming)", () => {
       model: "claude-3-5-sonnet-20241022",
       max_tokens: 1024,
       messages: [{ role: "user", content: "hello" }],
+      stream: true,
     });
 
     const events = parseClaudeSSEEvents(res.body);
@@ -401,6 +403,7 @@ describe("POST /v1/messages (streaming)", () => {
       model: "claude-3-5-sonnet-20241022",
       max_tokens: 1024,
       messages: [{ role: "user", content: "hello" }],
+      stream: true,
     });
 
     const events = parseClaudeSSEEvents(res.body);
@@ -417,6 +420,7 @@ describe("POST /v1/messages (streaming)", () => {
       model: "claude-3-5-sonnet-20241022",
       max_tokens: 1024,
       messages: [{ role: "user", content: "hello" }],
+      stream: true,
     });
 
     const events = parseClaudeSSEEvents(res.body);
@@ -433,6 +437,7 @@ describe("POST /v1/messages (streaming)", () => {
       model: "claude-3-5-sonnet-20241022",
       max_tokens: 1024,
       messages: [{ role: "user", content: "weather" }],
+      stream: true,
     });
 
     expect(res.status).toBe(200);
@@ -466,6 +471,7 @@ describe("POST /v1/messages (streaming)", () => {
       model: "claude-3-5-sonnet-20241022",
       max_tokens: 1024,
       messages: [{ role: "user", content: "weather" }],
+      stream: true,
     });
 
     const events = parseClaudeSSEEvents(res.body);
@@ -487,6 +493,7 @@ describe("POST /v1/messages (streaming)", () => {
       model: "claude-3-5-sonnet-20241022",
       max_tokens: 1024,
       messages: [{ role: "user", content: "weather" }],
+      stream: true,
     });
 
     const events = parseClaudeSSEEvents(res.body);
@@ -502,6 +509,7 @@ describe("POST /v1/messages (streaming)", () => {
       model: "claude-3-5-sonnet-20241022",
       max_tokens: 1024,
       messages: [{ role: "user", content: "multi-tool" }],
+      stream: true,
     });
 
     const events = parseClaudeSSEEvents(res.body);
@@ -526,6 +534,7 @@ describe("POST /v1/messages (streaming)", () => {
       model: "claude-3-5-sonnet-20241022",
       max_tokens: 1024,
       messages: [{ role: "user", content: "bigchunk" }],
+      stream: true,
     });
 
     const events = parseClaudeSSEEvents(res.body);
@@ -600,6 +609,44 @@ describe("POST /v1/messages (non-streaming)", () => {
   });
 });
 
+describe("POST /v1/messages (default non-streaming)", () => {
+  it("returns JSON response when stream field is omitted", async () => {
+    instance = await createServer(allFixtures);
+    const res = await post(`${instance.url}/v1/messages`, {
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "hello" }],
+      // stream field intentionally omitted
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("application/json");
+
+    const body = JSON.parse(res.body);
+    expect(body.type).toBe("message");
+    expect(body.role).toBe("assistant");
+    expect(body.content[0].text).toBe("Hi there!");
+  });
+
+  it("returns JSON tool call response when stream field is omitted", async () => {
+    instance = await createServer(allFixtures);
+    const res = await post(`${instance.url}/v1/messages`, {
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "weather" }],
+      // stream field intentionally omitted
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("application/json");
+
+    const body = JSON.parse(res.body);
+    expect(body.type).toBe("message");
+    expect(body.content[0].type).toBe("tool_use");
+    expect(body.content[0].name).toBe("get_weather");
+  });
+});
+
 describe("POST /v1/messages (error handling)", () => {
   it("returns error fixture with correct status", async () => {
     instance = await createServer(allFixtures);
@@ -612,6 +659,26 @@ describe("POST /v1/messages (error handling)", () => {
     expect(res.status).toBe(429);
     const body = JSON.parse(res.body);
     expect(body.error.message).toBe("Rate limited");
+  });
+
+  it("returns error in Anthropic format: { type: 'error', error: { type, message } }", async () => {
+    instance = await createServer(allFixtures);
+    const res = await post(`${instance.url}/v1/messages`, {
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "fail" }],
+    });
+
+    expect(res.status).toBe(429);
+    const body = JSON.parse(res.body);
+    // Anthropic wraps errors as { type: "error", error: { type, message } }
+    expect(body.type).toBe("error");
+    expect(body.error).toBeDefined();
+    expect(body.error.type).toBe("rate_limit_error");
+    expect(body.error.message).toBe("Rate limited");
+    // Should NOT have OpenAI-style fields at the top level
+    expect(body.status).toBeUndefined();
+    expect(body.error.code).toBeUndefined();
   });
 
   it("returns 404 when no fixture matches", async () => {
@@ -694,6 +761,36 @@ describe("POST /v1/messages (journal)", () => {
       { role: "system", content: "Be nice" },
       { role: "user", content: "hello" },
     ]);
+  });
+});
+
+describe("POST /v1/messages (error field preservation)", () => {
+  it("error type and message fields are preserved in Anthropic format", async () => {
+    instance = await createServer(allFixtures);
+    const res = await post(`${instance.url}/v1/messages`, {
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "fail" }],
+    });
+
+    expect(res.status).toBe(429);
+    const body = JSON.parse(res.body);
+    // Anthropic format: { type: "error", error: { type, message } }
+    expect(body.type).toBe("error");
+    expect(body.error.message).toBe("Rate limited");
+    expect(body.error.type).toBe("rate_limit_error");
+  });
+
+  it("Content-Type is application/json on error responses", async () => {
+    instance = await createServer(allFixtures);
+    const res = await post(`${instance.url}/v1/messages`, {
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 1024,
+      messages: [{ role: "user", content: "fail" }],
+    });
+
+    expect(res.status).toBe(429);
+    expect(res.headers["content-type"]).toBe("application/json");
   });
 });
 

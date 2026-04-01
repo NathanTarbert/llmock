@@ -502,28 +502,82 @@ describe("LLMock", () => {
     });
   });
 
-  describe("onToolCall convenience", () => {
-    it("registers a fixture matching a tool name", async () => {
+  describe("onEmbedding convenience", () => {
+    it("registers a fixture matching an inputText string", async () => {
       mock = new LLMock();
-      mock.onToolCall("get_weather", { content: "sunny" });
+      mock.onEmbedding("embed-test", { embedding: [0.1, 0.2, 0.3] });
       await mock.start();
 
-      await post(mock.url, {
-        model: "gpt-4",
-        messages: [
+      const res = await new Promise<{ status: number; data: string }>((resolve, reject) => {
+        const parsed = new URL(mock!.url);
+        const payload = JSON.stringify({
+          model: "text-embedding-3-small",
+          input: "embed-test input",
+        });
+        const req = http.request(
           {
-            role: "assistant",
-            content: null,
-            tool_calls: [
-              { id: "tc1", type: "function", function: { name: "get_weather", arguments: "{}" } },
-            ],
+            hostname: parsed.hostname,
+            port: parsed.port,
+            path: "/v1/embeddings",
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(payload),
+            },
           },
-          { role: "tool", content: "result", tool_call_id: "tc1" },
-        ],
+          (res) => {
+            let data = "";
+            res.on("data", (chunk) => (data += chunk));
+            res.on("end", () => resolve({ status: res.statusCode!, data }));
+          },
+        );
+        req.on("error", reject);
+        req.write(payload);
+        req.end();
       });
-      // The fixture match for toolName is checked against the last assistant message's tool_calls
-      // This may or may not match depending on router logic, but the fixture should be registered
-      expect(mock).toBeInstanceOf(LLMock);
+
+      expect(res.status).toBe(200);
+      const json = JSON.parse(res.data);
+      expect(json.data[0].embedding).toEqual([0.1, 0.2, 0.3]);
+    });
+
+    it("returns this for chaining", () => {
+      mock = new LLMock();
+      expect(mock.onEmbedding("x", { embedding: [0.1] })).toBe(mock);
+    });
+  });
+
+  describe("onToolCall convenience", () => {
+    it("onToolCall live server returns tool call response", async () => {
+      mock = new LLMock();
+      mock.onToolCall("get_weather", {
+        toolCalls: [{ name: "get_weather", arguments: JSON.stringify({ city: "SF" }) }],
+      });
+      await mock.start();
+
+      const res = await post(mock.url, {
+        model: "gpt-4",
+        messages: [{ role: "user", content: "What is the weather?" }],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "get_weather",
+              description: "Get weather",
+              parameters: { type: "object", properties: { city: { type: "string" } } },
+            },
+          },
+        ],
+        stream: false,
+      });
+
+      expect(res.status).toBe(200);
+      const json = JSON.parse(res.data);
+      expect(json.choices[0].message.tool_calls).toBeDefined();
+      expect(json.choices[0].message.tool_calls[0].function.name).toBe("get_weather");
+      expect(JSON.parse(json.choices[0].message.tool_calls[0].function.arguments)).toEqual({
+        city: "SF",
+      });
     });
 
     it("returns this for chaining", () => {
@@ -532,10 +586,96 @@ describe("LLMock", () => {
     });
   });
 
+  describe("onJsonOutput convenience", () => {
+    it("registers a fixture with responseFormat json_object and stringified content", () => {
+      mock = new LLMock();
+      mock.onJsonOutput("json-test", { name: "Alice", age: 30 });
+
+      const fixtures = mock.getFixtures();
+      expect(fixtures).toHaveLength(1);
+      expect(fixtures[0].match.userMessage).toBe("json-test");
+      expect(fixtures[0].match.responseFormat).toBe("json_object");
+      expect((fixtures[0].response as { content: string }).content).toBe(
+        JSON.stringify({ name: "Alice", age: 30 }),
+      );
+    });
+
+    it("accepts a string as jsonContent and uses it directly", () => {
+      mock = new LLMock();
+      mock.onJsonOutput("json-str", '{"key":"value"}');
+
+      const fixtures = mock.getFixtures();
+      expect((fixtures[0].response as { content: string }).content).toBe('{"key":"value"}');
+    });
+
+    it("accepts a RegExp pattern", () => {
+      mock = new LLMock();
+      mock.onJsonOutput(/json-\d+/, { result: true });
+
+      const fixtures = mock.getFixtures();
+      expect(fixtures[0].match.userMessage).toEqual(/json-\d+/);
+    });
+
+    it("returns this for chaining", () => {
+      mock = new LLMock();
+      expect(mock.onJsonOutput("x", { a: 1 })).toBe(mock);
+    });
+
+    it("passes through opts like latency", () => {
+      mock = new LLMock();
+      mock.onJsonOutput("opts", { a: 1 }, { latency: 100 });
+
+      const fixtures = mock.getFixtures();
+      expect(fixtures[0].latency).toBe(100);
+    });
+
+    it("serves JSON content through the server", async () => {
+      mock = new LLMock();
+      mock.onJsonOutput("give-json", { answer: 42 });
+      await mock.start();
+
+      const res = await post(mock.url, {
+        model: "gpt-4",
+        messages: [{ role: "user", content: "give-json" }],
+        stream: false,
+        response_format: { type: "json_object" },
+      });
+      expect(res.status).toBe(200);
+      const json = JSON.parse(res.data);
+      const content = json.choices[0].message.content;
+      expect(JSON.parse(content)).toEqual({ answer: 42 });
+    });
+  });
+
   describe("onToolResult convenience", () => {
     it("returns this for chaining", () => {
       mock = new LLMock();
       expect(mock.onToolResult("call_123", { content: "r" })).toBe(mock);
+    });
+
+    it("onToolResult matches tool result messages and returns fixture", async () => {
+      mock = new LLMock();
+      mock.onToolResult("call_abc", { content: "tool result response" });
+      await mock.start();
+
+      const res = await post(mock.url, {
+        model: "gpt-4",
+        messages: [
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              { id: "call_abc", type: "function", function: { name: "lookup", arguments: "{}" } },
+            ],
+          },
+          { role: "tool", content: "42", tool_call_id: "call_abc" },
+        ],
+        stream: false,
+      });
+
+      expect(res.status).toBe(200);
+      const json = JSON.parse(res.data);
+      expect(json.choices[0].message.content).toBe("tool result response");
     });
   });
 
@@ -656,6 +796,29 @@ describe("LLMock", () => {
     });
   });
 
+  describe("resetMatchCounts", () => {
+    it("clears match counts without clearing fixtures or journal", async () => {
+      mock = new LLMock();
+      mock.onMessage("hi", { content: "Hello" });
+      await mock.start();
+
+      // Make a request to populate journal and match counts
+      await post(mock.url, chatBody("hi"));
+      expect(mock.journal.size).toBe(1);
+      expect(mock.journal.fixtureMatchCounts.size).toBeGreaterThan(0);
+
+      // resetMatchCounts should clear counts but not journal or fixtures
+      mock.resetMatchCounts();
+      expect(mock.journal.fixtureMatchCounts.size).toBe(0);
+      expect(mock.journal.size).toBe(1); // journal entries preserved
+      expect(mock.getFixtures()).toHaveLength(1); // fixtures preserved
+
+      // Fixture should still work
+      const res = await post(mock.url, chatBody("hi"));
+      expect(res.status).toBe(200);
+    });
+  });
+
   describe("reset", () => {
     it("clears fixtures and journal", async () => {
       mock = new LLMock();
@@ -771,6 +934,51 @@ describe("LLMock", () => {
     it("throws before server is started", () => {
       mock = new LLMock();
       expect(() => mock!.port).toThrow("Server not started");
+    });
+  });
+
+  describe("error status defaults", () => {
+    it("error status defaults to 500 when omitted", async () => {
+      mock = new LLMock();
+      mock.addFixture({
+        match: { userMessage: "err" },
+        response: { error: { message: "boom", type: "server_error" } },
+      });
+      await mock.start();
+
+      const res = await post(mock.url, chatBody("err", false));
+      expect(res.status).toBe(500);
+    });
+  });
+
+  describe("setChaos / clearChaos", () => {
+    it("setChaos sets server-level chaos config", async () => {
+      mock = new LLMock();
+      mock.onMessage("hi", { content: "Hello" });
+      mock.setChaos({ dropRate: 1.0 });
+      await mock.start();
+
+      const res = await post(mock.url, chatBody("hi"));
+      expect(res.status).toBe(500);
+      const body = JSON.parse(res.data);
+      expect(body.error.code).toBe("chaos_drop");
+    });
+
+    it("clearChaos removes chaos config", async () => {
+      mock = new LLMock();
+      mock.onMessage("hi", { content: "Hello" });
+      mock.setChaos({ dropRate: 1.0 });
+      mock.clearChaos();
+      await mock.start();
+
+      const res = await post(mock.url, chatBody("hi"));
+      expect(res.status).toBe(200);
+      expect(res.data).toContain("Hello");
+    });
+
+    it("setChaos returns this for chaining", () => {
+      mock = new LLMock();
+      expect(mock.setChaos({ dropRate: 0.5 })).toBe(mock);
     });
   });
 

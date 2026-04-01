@@ -6,7 +6,7 @@
     <title>llmock — Deterministic mock LLM server for testing</title>
     <meta
       name="description"
-      content="Real HTTP server. Real SSE streams. WebSocket APIs. Fixture-driven. Zero dependencies. Multi-provider mock — OpenAI, Claude, Gemini — drop-in replacement for your test suite."
+      content="Real HTTP server. Real SSE streams. WebSocket APIs. Fixture-driven. Zero dependencies. Multi-provider mock — OpenAI, Claude, Gemini, AWS Bedrock, Azure, Ollama, Cohere, Vertex AI — drop-in replacement for your test suite."
     />
 
     <link rel="icon" type="image/svg+xml" href="favicon.svg" />
@@ -433,7 +433,7 @@
 
       /* ─── Sections ───────────────────────────────────────────────── */
       section {
-        padding: 6rem 0;
+        padding: 3rem 0;
       }
 
       .section-label {
@@ -468,6 +468,10 @@
         grid-template-columns: repeat(3, 1fr);
         gap: 1.5rem;
         margin-top: 3.5rem;
+      }
+
+      .features-grid > .feature-card:last-child:nth-child(3n + 1) {
+        grid-column: 2;
       }
 
       .feature-card {
@@ -634,18 +638,193 @@
         color: var(--warning);
       }
 
-      /* ─── Comparison Table ───────────────────────────────────────── */
-      .comparison {
+      /* ─── Reliability / Drift Detection ─────────────────────────── */
+      .triangle-wrapper {
+        position: relative;
+        width: 100%;
+        max-width: 600px;
+        margin: 3.5rem auto 1rem;
+        aspect-ratio: 1.3 / 1;
+      }
+      .triangle-wrapper svg {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 0;
+      }
+      .tri-node {
+        position: absolute;
+        background: var(--bg-card);
+        border: 2px solid;
+        border-radius: 12px;
+        padding: 1rem 1.25rem;
+        text-align: center;
+        width: 170px;
+        z-index: 1;
+      }
+      .tri-node h3 {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--text-primary);
+        margin-bottom: 0.3rem;
+      }
+      .tri-node p {
+        font-size: 0.75rem;
+        color: var(--text-secondary);
+        line-height: 1.4;
+      }
+      .tri-node .node-icon {
+        font-size: 1.5rem;
+        margin-bottom: 0.5rem;
+      }
+      .tri-node.sdk {
+        border-color: var(--blue);
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+      }
+      .tri-node.sdk .node-icon {
+        color: var(--blue);
+      }
+      .tri-node.real {
+        border-color: var(--accent);
+        bottom: 0;
+        left: 0;
+      }
+      .tri-node.real .node-icon {
+        color: var(--accent);
+      }
+      .tri-node.mock {
+        border-color: var(--purple);
+        bottom: 0;
+        right: 0;
+      }
+      .tri-node.mock .node-icon {
+        color: var(--purple);
+      }
+      .diagnosis-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1rem;
+        margin-top: 2.5rem;
+      }
+      .diagnosis-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1rem 1.25rem;
+      }
+      .diagnosis-card .diag-header {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.4rem;
+      }
+      .diagnosis-card .diag-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .diagnosis-card h4 {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--text-primary);
+      }
+      .diagnosis-card p {
+        font-size: 0.78rem;
+        color: var(--text-secondary);
+        line-height: 1.5;
+      }
+      .drift-report {
+        background: var(--bg-deep);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 1.25rem 1.5rem;
+        margin-top: 2.5rem;
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        line-height: 1.8;
+        color: var(--text-secondary);
+        overflow-x: auto;
+      }
+      .drift-report .report-header {
+        color: var(--text-primary);
+        font-weight: 600;
+        margin-bottom: 0.75rem;
+        font-size: 0.8rem;
+      }
+      .drift-report .severity-critical {
+        color: var(--error);
+      }
+      .drift-report .severity-warning {
+        color: var(--warning);
+      }
+      .drift-report .severity-ok {
+        color: var(--accent);
+      }
+      .drift-report .field-path {
+        color: var(--blue);
+      }
+      .drift-report .drift-label {
+        color: var(--text-primary);
+      }
+      .drift-report .report-summary {
+        color: var(--text-dim);
+      }
+      .drift-report .field-label {
+        color: var(--text-dim);
+      }
+      .drift-report .divider {
+        border-top: 1px solid var(--border);
+        margin: 0.6rem 0;
+      }
+      .ci-footer {
+        display: flex;
+        align-items: center;
+        gap: 1.5rem;
+        margin-top: 2rem;
+        padding-top: 1.5rem;
         border-top: 1px solid var(--border);
       }
+      .ci-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.4rem 0.75rem;
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        font-family: var(--font-mono);
+        flex-shrink: 0;
+      }
+      .ci-badge .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+      .ci-text {
+        font-size: 0.9rem;
+        color: var(--text-secondary);
+        line-height: 1.6;
+      }
 
+      /* ─── Comparison Table ───────────────────────────────────────── */
+      .comparison-table-wrap {
+        margin-top: 3rem;
+      }
       .comparison-table {
         width: 100%;
-        margin-top: 3rem;
-        border-collapse: collapse;
+        border-collapse: separate;
+        border-spacing: 0;
         font-size: 0.9rem;
       }
-      .comparison-table th {
+      .comparison-table thead th {
         text-align: left;
         padding: 1rem 1.25rem;
         font-family: var(--font-mono);
@@ -655,9 +834,19 @@
         letter-spacing: 0.08em;
         border-bottom: 2px solid var(--border-bright);
         color: var(--text-secondary);
+        position: sticky;
+        top: 56px;
+        background: var(--bg-deep);
+        z-index: 10;
       }
-      .comparison-table th:nth-child(2) {
+      .comparison-table thead th:nth-child(2) {
         color: var(--accent);
+      }
+      .comparison-table thead th a {
+        text-decoration: none;
+      }
+      .comparison-table thead th a:hover {
+        text-decoration: underline;
       }
       .comparison-table td {
         padding: 0.85rem 1.25rem;
@@ -756,16 +945,6 @@
           transform: translateY(0);
         }
       }
-      @keyframes sseLine {
-        from {
-          opacity: 0;
-          transform: translateX(-8px);
-        }
-        to {
-          opacity: 1;
-          transform: translateX(0);
-        }
-      }
       @keyframes blink {
         50% {
           opacity: 0;
@@ -795,6 +974,11 @@
         opacity: 1;
         transform: translateY(0);
       }
+      /* Remove transform from comparison section so sticky headers work
+         (transform creates a new containing block that breaks sticky) */
+      .comparison.reveal.visible {
+        transform: none;
+      }
 
       /* ─── Responsive ─────────────────────────────────────────────── */
       @media (max-width: 900px) {
@@ -802,6 +986,9 @@
           grid-template-columns: 1fr;
         }
         .code-section {
+          grid-template-columns: 1fr;
+        }
+        .diagnosis-grid {
           grid-template-columns: 1fr;
         }
         .comparison-table {
@@ -825,6 +1012,10 @@
         .nav-links a:not(.gh-link) {
           display: none;
         }
+        .ci-footer {
+          flex-direction: column;
+          align-items: flex-start;
+        }
         footer .container {
           flex-direction: column;
           gap: 1.5rem;
@@ -845,7 +1036,9 @@
         <ul class="nav-links">
           <li><a href="#features">Features</a></li>
           <li><a href="#examples">Examples</a></li>
-          <li><a href="#comparison">vs MSW</a></li>
+          <li><a href="#comparison">Comparison</a></li>
+          <li><a href="#reliability">Reliability</a></li>
+          <li><a href="docs.html">Docs</a></li>
           <li>
             <a href="https://github.com/CopilotKit/llmock" class="gh-link" target="_blank">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -865,7 +1058,16 @@
       <div class="container">
         <div class="hero-badge">
           <span class="dot"></span>
-          Zero dependencies &middot; Node.js builtins only
+          Zero dependencies &middot; Node.js builtins only &middot;
+          <a
+            href="https://www.npmjs.com/package/@copilotkit/llmock"
+            target="_blank"
+            style="display: inline-flex; align-items: center; vertical-align: middle"
+            ><img
+              src="https://img.shields.io/npm/v/@copilotkit/llmock?style=flat-square&color=e8e8f0&labelColor=2a2a3a&label=Version"
+              alt="npm version"
+              style="height: 16px"
+          /></a>
         </div>
 
         <h1>Deterministic <span class="highlight">mock LLM</span> server for testing</h1>
@@ -876,9 +1078,7 @@
         </p>
 
         <div class="hero-actions">
-          <a href="https://github.com/CopilotKit/llmock#readme" class="btn btn-primary">
-            Get Started
-          </a>
+          <a href="docs.html" class="btn btn-primary"> Get Started </a>
           <a
             href="https://www.npmjs.com/package/@copilotkit/llmock"
             class="btn btn-secondary"
@@ -1008,6 +1208,38 @@
             <p>
               OpenAI Responses, OpenAI Realtime, and Gemini Live over WebSocket. Same fixtures, real
               RFC 6455 framing, zero dependencies. Text + tool calls.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon purple">🎛️</div>
+            <h3>Streaming Physics</h3>
+            <p>
+              Simulate realistic streaming timing with TTFT, TPS, and jitter. Test loading states
+              and streaming UX under real-world conditions.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon red">🎲</div>
+            <h3>Chaos Testing</h3>
+            <p>
+              Probabilistic failure injection &mdash; random errors, latency spikes, and stream
+              corruption for resilience testing.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon amber">📊</div>
+            <h3>Prometheus Metrics</h3>
+            <p>
+              Expose request counts, latencies, and fixture match rates via a /metrics endpoint.
+              Grafana-ready.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon green">🔴</div>
+            <h3>Record &amp; Replay</h3>
+            <p>
+              Proxy to real APIs, record responses as fixtures, then replay them deterministically
+              in tests.
             </p>
           </div>
         </div>
@@ -1198,7 +1430,9 @@
             <ul>
               <li>OpenAI Responses API over WebSocket</li>
               <li>OpenAI Realtime API — text + tool calls</li>
-              <li>Gemini Live BidiGenerateContent</li>
+              <li>
+                Gemini Live BidiGenerateContent (unverified — no text-capable model exists yet)
+              </li>
               <li>No audio/video — text and tool call paths only</li>
             </ul>
           </div>
@@ -1238,10 +1472,10 @@
     <section id="comparison" class="comparison reveal">
       <div class="container">
         <span class="section-label">Comparison</span>
-        <h2 class="section-title">llmock vs MSW</h2>
+        <h2 class="section-title">How llmock compares</h2>
         <p class="section-desc">
-          MSW is great for in-process API mocking. llmock is for when multiple processes need to hit
-          the same LLM endpoint.
+          llmock is purpose-built for LLM API testing. Here's how it stacks up against
+          general-purpose and LLM-specific mocking tools.
         </p>
 
         <div class="arch-diagram">
@@ -1272,103 +1506,530 @@
           <span class="process">CopilotKit runtime</span>
         </div>
 
-        <table class="comparison-table">
-          <thead>
-            <tr>
-              <th>Capability</th>
-              <th>llmock</th>
-              <th>MSW</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Cross-process interception</td>
-              <td class="yes">Real server ✓</td>
-              <td class="no">In-process only</td>
-            </tr>
-            <tr>
-              <td>Chat Completions SSE</td>
-              <td class="yes">Built-in ✓</td>
-              <td class="manual">Manual — build data/[DONE] yourself</td>
-            </tr>
-            <tr>
-              <td>Responses API SSE</td>
-              <td class="yes">Built-in ✓</td>
-              <td class="manual">Manual — MSW sse() uses wrong format</td>
-            </tr>
-            <tr>
-              <td>Claude Messages API SSE</td>
-              <td class="yes">Built-in ✓</td>
-              <td class="manual">Manual — build event/data SSE yourself</td>
-            </tr>
-            <tr>
-              <td>Gemini streaming</td>
-              <td class="yes">Built-in ✓</td>
-              <td class="manual">Manual — build data SSE yourself</td>
-            </tr>
-            <tr>
-              <td>WebSocket APIs (Realtime, Gemini Live)</td>
-              <td class="yes">Built-in ✓</td>
-              <td class="no">No</td>
-            </tr>
-            <tr>
-              <td>Multi-provider support</td>
-              <td class="yes">OpenAI + Claude + Gemini ✓</td>
-              <td class="no">Provider-agnostic (manual)</td>
-            </tr>
-            <tr>
-              <td>Fixture files (JSON)</td>
-              <td class="yes">Yes ✓</td>
-              <td class="no">No — handlers are code-only</td>
-            </tr>
-            <tr>
-              <td>Request journal</td>
-              <td class="yes">Yes ✓</td>
-              <td class="no">No — track manually</td>
-            </tr>
-            <tr>
-              <td>Non-streaming responses</td>
-              <td class="yes">Yes ✓</td>
-              <td class="yes">Yes ✓</td>
-            </tr>
-            <tr>
-              <td>Error injection (one-shot)</td>
-              <td class="yes">Yes ✓</td>
-              <td class="yes">Yes (server.use)</td>
-            </tr>
-            <tr>
-              <td>CLI server</td>
-              <td class="yes">Yes ✓</td>
-              <td class="no">No</td>
-            </tr>
-            <tr>
-              <td>Dependencies</td>
-              <td class="yes">Zero</td>
-              <td class="no">~300KB</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="comparison-table-wrap">
+          <table class="comparison-table">
+            <thead>
+              <tr>
+                <th>Capability</th>
+                <th>
+                  <a
+                    href="https://github.com/CopilotKit/llmock"
+                    target="_blank"
+                    style="color: var(--accent)"
+                    >llmock</a
+                  >
+                </th>
+                <th>
+                  <a href="https://mswjs.io/" target="_blank" style="color: var(--text-secondary)"
+                    >MSW</a
+                  >
+                </th>
+                <th>
+                  <a
+                    href="https://github.com/vidaiUK/VidaiMock"
+                    target="_blank"
+                    style="color: var(--text-secondary)"
+                    >VidaiMock</a
+                  >
+                </th>
+                <th>
+                  <a
+                    href="https://github.com/dwmkerr/mock-llm"
+                    target="_blank"
+                    style="color: var(--text-secondary)"
+                    >mock-llm</a
+                  >
+                </th>
+                <th>
+                  <a
+                    href="https://github.com/piyook/llm-mock"
+                    target="_blank"
+                    style="color: var(--text-secondary)"
+                    >piyook/llm-mock</a
+                  >
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Cross-process interception</td>
+                <td class="yes">Real server ✓</td>
+                <td class="no">In-process only</td>
+                <td class="yes">Yes</td>
+                <td class="yes">Yes (Docker)</td>
+                <td class="yes">Yes</td>
+              </tr>
+              <tr>
+                <td>Chat Completions SSE</td>
+                <td class="yes">Built-in ✓</td>
+                <td class="manual">Manual</td>
+                <td class="yes">Yes</td>
+                <td class="yes">Yes</td>
+                <td class="yes">Yes</td>
+              </tr>
+              <tr>
+                <td>Responses API SSE</td>
+                <td class="yes">Built-in ✓</td>
+                <td class="manual">Manual</td>
+                <td class="yes">Yes</td>
+                <td class="yes">Yes</td>
+                <td class="yes">Yes</td>
+              </tr>
+              <tr>
+                <td>Claude Messages API</td>
+                <td class="yes">Built-in ✓</td>
+                <td class="manual">Manual</td>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+              </tr>
+              <tr>
+                <td>Gemini streaming</td>
+                <td class="yes">Built-in ✓</td>
+                <td class="manual">Manual</td>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+              </tr>
+              <tr>
+                <td>WebSocket APIs</td>
+                <td class="yes">Built-in ✓</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <td>Multi-provider support</td>
+                <td class="yes">
+                  OpenAI + Claude + Gemini + Bedrock + Azure + Ollama + Cohere + Vertex AI ✓
+                </td>
+                <td class="no">Manual</td>
+                <td class="yes">
+                  OpenAI + Claude + Gemini + Bedrock + Azure + Vertex + Cohere + more
+                </td>
+                <td class="manual">OpenAI only</td>
+                <td class="manual">OpenAI only</td>
+              </tr>
+              <tr>
+                <td>Embeddings API</td>
+                <td class="yes">Built-in ✓</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+              </tr>
+              <tr>
+                <td>Structured output / JSON mode</td>
+                <td class="yes">Built-in ✓</td>
+                <td class="no">Manual</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <td>Sequential / stateful responses</td>
+                <td class="yes">Built-in ✓</td>
+                <td class="manual">Manual</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <td>Fixture files</td>
+                <td class="yes">JSON ✓</td>
+                <td class="no">Code-only</td>
+                <td class="manual">Tera templates</td>
+                <td class="manual">YAML config</td>
+                <td class="manual">JSON templates</td>
+              </tr>
+              <tr>
+                <td>Programmatic API (test helpers)</td>
+                <td class="yes">Yes (TypeScript/JS) ✓</td>
+                <td class="yes">Yes (TypeScript/JS)</td>
+                <td class="no">No (binary only)</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <td>Request journal</td>
+                <td class="yes">Yes ✓</td>
+                <td class="no">Manual</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+              </tr>
+              <tr>
+                <td>Error injection (one-shot)</td>
+                <td class="yes">Yes ✓</td>
+                <td class="yes">Yes</td>
+                <td class="manual">Partial</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <td>Docker image</td>
+                <td class="yes">Yes ✓</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+                <td class="yes">Yes</td>
+                <td class="yes">Yes</td>
+              </tr>
+              <tr>
+                <td>Helm chart</td>
+                <td class="yes">Yes ✓</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <td>Drift detection</td>
+                <td class="yes">Yes ✓</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <td>Azure OpenAI</td>
+                <td class="yes">Yes ✓</td>
+                <td class="manual">Manual</td>
+                <td class="yes">Yes</td>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <td>AWS Bedrock</td>
+                <td class="yes">Yes (streaming + Converse) ✓</td>
+                <td class="manual">Manual</td>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <td>CLI server</td>
+                <td class="yes">Yes ✓</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+                <td class="yes">Yes</td>
+                <td class="yes">Yes</td>
+              </tr>
+              <tr>
+                <td>GET /v1/models</td>
+                <td class="yes">Yes ✓</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <td>Chaos testing</td>
+                <td class="yes">Built-in ✓</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <td>Record &amp; replay</td>
+                <td class="yes">Built-in ✓</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <td>Prometheus metrics</td>
+                <td class="yes">Built-in ✓</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <td>Streaming physics</td>
+                <td class="yes">Built-in ✓</td>
+                <td class="no">No</td>
+                <td class="yes">Yes</td>
+                <td class="no">No</td>
+                <td class="no">No</td>
+              </tr>
+              <tr>
+                <td>Dependencies</td>
+                <td class="yes">Zero</td>
+                <td class="no">~300KB</td>
+                <td class="yes">Zero (Rust binary)</td>
+                <td class="no">Node.js + Express</td>
+                <td class="manual">Minimal</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ Reliability / Drift Detection ═══════════════════════════ -->
+    <section id="reliability" class="reveal">
+      <div class="container">
+        <span class="section-label">Reliability</span>
+        <h2 class="section-title">Verified against real APIs. Every day.</h2>
+        <p class="section-desc">
+          A mock that doesn't match reality is worse than no mock &mdash; your tests pass, but
+          production breaks. llmock runs three-way drift detection that compares SDK types, real API
+          responses, and mock output to catch shape mismatches before you do.
+        </p>
+
+        <!-- Triangle diagram -->
+        <div class="triangle-wrapper">
+          <svg viewBox="0 0 600 420" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- SDK → Real (left edge) -->
+            <line
+              x1="245"
+              y1="105"
+              x2="130"
+              y2="280"
+              stroke="var(--border)"
+              stroke-width="1.5"
+              stroke-dasharray="6 4"
+            />
+            <polygon points="127,274 137,278 133,286" fill="var(--border)" />
+            <!-- SDK → Mock (right edge) -->
+            <line
+              x1="355"
+              y1="105"
+              x2="470"
+              y2="280"
+              stroke="var(--border)"
+              stroke-width="1.5"
+              stroke-dasharray="6 4"
+            />
+            <polygon points="473,274 463,278 467,286" fill="var(--border)" />
+            <!-- Real ↔ Mock (bottom edge) -->
+            <line
+              x1="195"
+              y1="355"
+              x2="405"
+              y2="355"
+              stroke="var(--border)"
+              stroke-width="1.5"
+              stroke-dasharray="6 4"
+            />
+            <polygon points="200,349 190,355 200,361" fill="var(--border)" />
+            <polygon points="400,349 410,355 400,361" fill="var(--border)" />
+            <!-- Edge labels (horizontal, centered on each line) -->
+            <rect x="131" y="182" width="85" height="20" rx="4" fill="var(--bg-deep)" />
+            <text
+              x="173"
+              y="196"
+              text-anchor="middle"
+              fill="var(--text-dim)"
+              font-family="JetBrains Mono, SF Mono, Fira Code, monospace"
+              font-size="11"
+            >
+              SDK = Real?
+            </text>
+            <rect x="360" y="182" width="90" height="20" rx="4" fill="var(--bg-deep)" />
+            <text
+              x="405"
+              y="196"
+              text-anchor="middle"
+              fill="var(--text-dim)"
+              font-family="JetBrains Mono, SF Mono, Fira Code, monospace"
+              font-size="11"
+            >
+              SDK = Mock?
+            </text>
+            <rect x="255" y="338" width="90" height="20" rx="4" fill="var(--bg-deep)" />
+            <text
+              x="300"
+              y="352"
+              text-anchor="middle"
+              fill="var(--text-dim)"
+              font-family="JetBrains Mono, SF Mono, Fira Code, monospace"
+              font-size="11"
+            >
+              Real = Mock?
+            </text>
+          </svg>
+          <div class="tri-node sdk">
+            <div class="node-icon">{ }</div>
+            <h3>SDK Types</h3>
+            <p>What TypeScript types say the shape should be</p>
+          </div>
+          <div class="tri-node real">
+            <div class="node-icon">&#8644;</div>
+            <h3>Real API</h3>
+            <p>What OpenAI, Claude, Gemini actually return</p>
+          </div>
+          <div class="tri-node mock">
+            <div class="node-icon">&#9881;</div>
+            <h3>llmock</h3>
+            <p>What the mock produces for the same request</p>
+          </div>
+        </div>
+
+        <!-- Diagnosis cards -->
+        <div class="diagnosis-grid">
+          <div class="diagnosis-card">
+            <div class="diag-header">
+              <div class="diag-dot" style="background: var(--error)"></div>
+              <h4>Mock doesn't match real</h4>
+            </div>
+            <p>
+              llmock needs updating &mdash; test fails immediately. The SDK comparison tells us why
+              it drifted.
+            </p>
+          </div>
+          <div class="diagnosis-card">
+            <div class="diag-header">
+              <div class="diag-dot" style="background: var(--warning)"></div>
+              <h4>Provider changed, SDK is behind</h4>
+            </div>
+            <p>
+              Early warning &mdash; the real API has new fields that neither the SDK nor llmock know
+              about yet.
+            </p>
+          </div>
+          <div class="diagnosis-card">
+            <div class="diag-header">
+              <div class="diag-dot" style="background: var(--accent)"></div>
+              <h4>All three agree</h4>
+            </div>
+            <p>No drift &mdash; the mock matches reality and the SDK types are current.</p>
+          </div>
+        </div>
+
+        <!-- Drift report snippet -->
+        <div class="drift-report">
+          <div class="report-header">$ pnpm test:drift</div>
+          <span class="severity-critical">[critical]</span>
+          <span class="drift-label">LLMOCK DRIFT</span> &mdash; field in SDK + real API but missing
+          from mock<br />
+          <span class="field-label">Path:</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="field-path"
+            >choices[].message.refusal</span
+          ><br />
+          <span class="field-label">SDK:</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;null &nbsp;&nbsp;
+          <span class="field-label">Real:</span> null &nbsp;&nbsp;
+          <span class="field-label">Mock:</span> &lt;absent&gt;<br />
+          <div class="divider"></div>
+          <span class="severity-critical">[critical]</span>
+          <span class="drift-label">TYPE MISMATCH</span> &mdash; real API and mock disagree on
+          type<br />
+          <span class="field-label">Path:</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="field-path"
+            >content[].input</span
+          ><br />
+          <span class="field-label">SDK:</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;object &nbsp;&nbsp;
+          <span class="field-label">Real:</span> object &nbsp;&nbsp;
+          <span class="field-label">Mock:</span> string<br />
+          <div class="divider"></div>
+          <span class="severity-warning">[warning]</span>
+          <span class="drift-label">PROVIDER ADDED FIELD</span> &mdash; in real API but not in SDK
+          or mock<br />
+          <span class="field-label">Path:</span>&nbsp;&nbsp;&nbsp;&nbsp;<span class="field-path"
+            >choices[].message.annotations</span
+          ><br />
+          <span class="field-label">SDK:</span>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&lt;absent&gt;
+          &nbsp;&nbsp; <span class="field-label">Real:</span> array &nbsp;&nbsp;
+          <span class="field-label">Mock:</span> &lt;absent&gt;<br />
+          <div class="divider"></div>
+          <span class="severity-ok" style="font-size: 0.85rem">&#10003;</span>
+          <span class="report-summary"
+            >2 critical (test fails) &middot; 1 warning (logged) &middot; detected before any user
+            reported it</span
+          >
+        </div>
+
+        <!-- CI footer -->
+        <div class="ci-footer">
+          <div class="ci-badge"><span class="dot"></span> Daily CI</div>
+          <span class="ci-text">Drift tests across 4 providers run automatically every day.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══ Claude Code Integration ═══════════════════════════════════ -->
+    <section id="claude-code" class="reveal">
+      <div class="container">
+        <span class="section-label">AI-Assisted Development</span>
+        <h2 class="section-title">Claude Code Integration</h2>
+        <p class="section-desc">
+          llmock ships with a
+          <a href="https://docs.anthropic.com/en/docs/claude-code" target="_blank">Claude Code</a>
+          skill that teaches your AI assistant how to write fixtures correctly &mdash; match fields,
+          response types, agent loop patterns, gotchas, and debugging techniques.
+        </p>
+
+        <div class="features-grid" style="grid-template-columns: repeat(2, 1fr)">
+          <div class="feature-card">
+            <div class="feature-icon green">🔌</div>
+            <h3>Plugin Install</h3>
+            <p>
+              <code>/plugin marketplace add CopilotKit/llmock</code><br />
+              <code>/plugin install llmock@copilotkit-tools</code>
+            </p>
+            <p style="margin-top: 0.5rem; color: var(--text-secondary)">
+              Skill appears as <code>/llmock:write-fixtures</code>
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon blue">📂</div>
+            <h3>Local Plugin</h3>
+            <p>
+              <code>claude --plugin-dir ./node_modules/@copilotkit/llmock</code>
+            </p>
+            <p style="margin-top: 0.5rem; color: var(--text-secondary)">
+              Same result, no marketplace needed
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon purple">📁</div>
+            <h3>Add Directory</h3>
+            <p>
+              <code>claude --add-dir ./node_modules/@copilotkit/llmock</code>
+            </p>
+            <p style="margin-top: 0.5rem; color: var(--text-secondary)">
+              Skill appears as <code>/write-fixtures</code> for the session
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon amber">📋</div>
+            <h3>Copy to Project</h3>
+            <p>
+              <code
+                >cp node_modules/@copilotkit/llmock/.claude/commands/write-fixtures.md
+                .claude/commands/</code
+              >
+            </p>
+            <p style="margin-top: 0.5rem; color: var(--text-secondary)">
+              Permanent <code>/write-fixtures</code> &mdash; commit to share with team
+            </p>
+          </div>
+        </div>
       </div>
     </section>
 
     <!-- ═══ Real-World Usage ═════════════════════════════════════════ -->
     <section class="reveal">
       <div class="container">
-        <h2>Real-World Usage</h2>
-        <p>
+        <h2 class="section-title">Real-World Usage</h2>
+        <p class="section-desc">
           <a href="https://github.com/CopilotKit/CopilotKit" target="_blank">CopilotKit</a> uses
           llmock across its test suite to verify AI agent behavior across multiple LLM providers
           without hitting real APIs. The tests cover streaming text, tool calls, and multi-turn
-          conversations across both v1 and v2 runtimes.
-        </p>
-        <p>
-          See the
+          conversations across both v1 and v2 runtimes. See the
           <a
             href="https://github.com/CopilotKit/CopilotKit/search?q=llmock&amp;type=code"
             target="_blank"
-            >CopilotKit test suite</a
+            >test suite</a
           >
-          for real-world examples of llmock in action.
+          and
+          <a
+            href="https://github.com/CopilotKit/CopilotKit/search?q=fixtures+path%3A**%2Ffixtures&amp;type=code"
+            target="_blank"
+            >fixture files</a
+          >
+          for real-world examples.
         </p>
       </div>
     </section>
@@ -1386,7 +2047,7 @@
             <a href="https://www.npmjs.com/package/@copilotkit/llmock" target="_blank">npm</a>
           </li>
           <li>
-            <a href="https://github.com/CopilotKit/llmock#readme" target="_blank">Docs</a>
+            <a href="docs.html">Docs</a>
           </li>
           <li>
             <a href="https://github.com/CopilotKit/llmock/issues" target="_blank">Issues</a>

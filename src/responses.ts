@@ -11,6 +11,8 @@ import type {
   ChatCompletionRequest,
   ChatMessage,
   Fixture,
+  HandlerDefaults,
+  StreamingProfile,
   ToolCall,
   ToolDefinition,
 } from "./types.js";
@@ -20,11 +22,14 @@ import {
   isTextResponse,
   isToolCallResponse,
   isErrorResponse,
+  flattenHeaders,
 } from "./helpers.js";
 import { matchFixture } from "./router.js";
-import { writeErrorResponse, delay } from "./sse-writer.js";
+import { writeErrorResponse, delay, calculateDelay } from "./sse-writer.js";
 import { createInterruptionSignal } from "./interruption.js";
 import type { Journal } from "./journal.js";
+import { applyChaos } from "./chaos.js";
+import { proxyAndRecord } from "./recorder.js";
 
 // ─── Responses API request types ────────────────────────────────────────────
 
@@ -445,6 +450,7 @@ function buildToolCallResponse(toolCalls: ToolCall[], model: string): object {
 
 interface ResponsesStreamOptions {
   latency?: number;
+  streamingProfile?: StreamingProfile;
   signal?: AbortSignal;
   onChunkSent?: () => void;
 }
@@ -457,6 +463,7 @@ async function writeResponsesSSEStream(
   const opts: ResponsesStreamOptions =
     typeof optionsOrLatency === "number" ? { latency: optionsOrLatency } : (optionsOrLatency ?? {});
   const latency = opts.latency ?? 0;
+  const profile = opts.streamingProfile;
   const signal = opts.signal;
   const onChunkSent = opts.onChunkSent;
 
@@ -465,13 +472,16 @@ async function writeResponsesSSEStream(
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
+  let chunkIndex = 0;
   for (const event of events) {
-    if (latency > 0) await delay(latency, signal);
+    const chunkDelay = calculateDelay(chunkIndex, profile, latency);
+    if (chunkDelay > 0) await delay(chunkDelay, signal);
     if (signal?.aborted) return false;
     if (res.writableEnded) return true;
     res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     onChunkSent?.();
     if (signal?.aborted) return false;
+    chunkIndex++;
   }
 
   if (!res.writableEnded) {
@@ -488,7 +498,7 @@ export async function handleResponses(
   raw: string,
   fixtures: Fixture[],
   journal: Journal,
-  defaults: { latency: number; chunkSize: number },
+  defaults: HandlerDefaults,
   setCorsHeaders: (res: http.ServerResponse) => void,
 ): Promise<void> {
   setCorsHeaders(res);
@@ -497,6 +507,13 @@ export async function handleResponses(
   try {
     responsesReq = JSON.parse(raw) as ResponsesRequest;
   } catch {
+    journal.add({
+      method: req.method ?? "POST",
+      path: req.url ?? "/v1/responses",
+      headers: flattenHeaders(req.headers),
+      body: null,
+      response: { status: 400, fixture: null },
+    });
     writeErrorResponse(
       res,
       400,
@@ -510,22 +527,76 @@ export async function handleResponses(
   // Convert to ChatCompletionRequest for fixture matching
   const completionReq = responsesToCompletionRequest(responsesReq);
 
-  const fixture = matchFixture(fixtures, completionReq);
+  const fixture = matchFixture(fixtures, completionReq, journal.fixtureMatchCounts);
+
+  if (fixture) {
+    journal.incrementFixtureMatchCount(fixture, fixtures);
+  }
+
+  if (
+    applyChaos(
+      res,
+      fixture,
+      defaults.chaos,
+      req.headers,
+      journal,
+      {
+        method: req.method ?? "POST",
+        path: req.url ?? "/v1/responses",
+        headers: flattenHeaders(req.headers),
+        body: completionReq,
+      },
+      defaults.registry,
+      defaults.logger,
+    )
+  )
+    return;
 
   if (!fixture) {
+    if (defaults.record) {
+      const proxied = await proxyAndRecord(
+        req,
+        res,
+        completionReq,
+        "openai",
+        req.url ?? "/v1/responses",
+        fixtures,
+        defaults,
+        raw,
+      );
+      if (proxied) {
+        journal.add({
+          method: req.method ?? "POST",
+          path: req.url ?? "/v1/responses",
+          headers: flattenHeaders(req.headers),
+          body: completionReq,
+          response: { status: res.statusCode ?? 200, fixture: null },
+        });
+        return;
+      }
+    }
+    const strictStatus = defaults.strict ? 503 : 404;
+    const strictMessage = defaults.strict
+      ? "Strict mode: no fixture matched"
+      : "No fixture matched";
+    if (defaults.strict) {
+      defaults.logger.error(
+        `STRICT: No fixture matched for ${req.method ?? "POST"} ${req.url ?? "/v1/responses"}`,
+      );
+    }
     journal.add({
       method: req.method ?? "POST",
       path: req.url ?? "/v1/responses",
-      headers: {},
+      headers: flattenHeaders(req.headers),
       body: completionReq,
-      response: { status: 404, fixture: null },
+      response: { status: strictStatus, fixture: null },
     });
     writeErrorResponse(
       res,
-      404,
+      strictStatus,
       JSON.stringify({
         error: {
-          message: "No fixture matched",
+          message: strictMessage,
           type: "invalid_request_error",
           code: "no_fixture_match",
         },
@@ -544,7 +615,7 @@ export async function handleResponses(
     journal.add({
       method: req.method ?? "POST",
       path: req.url ?? "/v1/responses",
-      headers: {},
+      headers: flattenHeaders(req.headers),
       body: completionReq,
       response: { status, fixture },
     });
@@ -557,11 +628,11 @@ export async function handleResponses(
     const journalEntry = journal.add({
       method: req.method ?? "POST",
       path: req.url ?? "/v1/responses",
-      headers: {},
+      headers: flattenHeaders(req.headers),
       body: completionReq,
       response: { status: 200, fixture },
     });
-    if (responsesReq.stream === false) {
+    if (responsesReq.stream !== true) {
       const body = buildTextResponse(response.content, completionReq.model);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(body));
@@ -570,6 +641,7 @@ export async function handleResponses(
       const interruption = createInterruptionSignal(fixture);
       const completed = await writeResponsesSSEStream(res, events, {
         latency,
+        streamingProfile: fixture.streamingProfile,
         signal: interruption?.signal,
         onChunkSent: interruption?.tick,
       });
@@ -588,11 +660,11 @@ export async function handleResponses(
     const journalEntry = journal.add({
       method: req.method ?? "POST",
       path: req.url ?? "/v1/responses",
-      headers: {},
+      headers: flattenHeaders(req.headers),
       body: completionReq,
       response: { status: 200, fixture },
     });
-    if (responsesReq.stream === false) {
+    if (responsesReq.stream !== true) {
       const body = buildToolCallResponse(response.toolCalls, completionReq.model);
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify(body));
@@ -601,6 +673,7 @@ export async function handleResponses(
       const interruption = createInterruptionSignal(fixture);
       const completed = await writeResponsesSSEStream(res, events, {
         latency,
+        streamingProfile: fixture.streamingProfile,
         signal: interruption?.signal,
         onChunkSent: interruption?.tick,
       });
@@ -618,7 +691,7 @@ export async function handleResponses(
   journal.add({
     method: req.method ?? "POST",
     path: req.url ?? "/v1/responses",
-    headers: {},
+    headers: flattenHeaders(req.headers),
     body: completionReq,
     response: { status: 500, fixture },
   });

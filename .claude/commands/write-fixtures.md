@@ -1,0 +1,1 @@
+../../skills/write-fixtures/SKILL.md

@@ -5,7 +5,12 @@ export { LLMock } from "./llmock.js";
 export { createServer, type ServerInstance } from "./server.js";
 
 // Fixture loading
-export { loadFixtureFile, loadFixturesFromDir } from "./fixture-loader.js";
+export { loadFixtureFile, loadFixturesFromDir, validateFixtures } from "./fixture-loader.js";
+export type { ValidationResult } from "./fixture-loader.js";
+
+// Logger
+export { Logger } from "./logger.js";
+export type { LogLevel } from "./logger.js";
 
 // Journal
 export { Journal } from "./journal.js";
@@ -18,6 +23,36 @@ export { handleResponses, buildTextStreamEvents, buildToolCallStreamEvents } fro
 export type { ResponsesSSEEvent } from "./responses.js";
 export { handleMessages } from "./messages.js";
 export { handleGemini } from "./gemini.js";
+export { handleEmbeddings } from "./embeddings.js";
+export { handleBedrock, bedrockToCompletionRequest, handleBedrockStream } from "./bedrock.js";
+
+// Bedrock Converse
+export {
+  handleConverse,
+  handleConverseStream,
+  converseToCompletionRequest,
+} from "./bedrock-converse.js";
+
+// AWS Event Stream
+export {
+  encodeEventStreamFrame,
+  encodeEventStreamMessage,
+  writeEventStream,
+} from "./aws-event-stream.js";
+
+// Metrics
+export { createMetricsRegistry, normalizePathLabel } from "./metrics.js";
+export type { MetricsRegistry } from "./metrics.js";
+
+// NDJSON
+export { writeNDJSONStream } from "./ndjson-writer.js";
+export type { NDJSONStreamOptions } from "./ndjson-writer.js";
+
+// Ollama
+export { handleOllama, handleOllamaGenerate, ollamaToCompletionRequest } from "./ollama.js";
+
+// Cohere
+export { handleCohere, cohereToCompletionRequest } from "./cohere.js";
 
 // WebSocket
 export { WebSocketConnection, upgradeToWebSocket, computeAcceptKey } from "./ws-framing.js";
@@ -27,21 +62,48 @@ export { handleWebSocketGeminiLive } from "./ws-gemini-live.js";
 
 // Helpers
 export {
+  flattenHeaders,
   generateId,
   generateToolCallId,
   generateMessageId,
   generateToolUseId,
   buildTextChunks,
   buildToolCallChunks,
+  isEmbeddingResponse,
+  generateDeterministicEmbedding,
+  buildEmbeddingResponse,
 } from "./helpers.js";
+export type { EmbeddingAPIResponse } from "./helpers.js";
 
 // Interruption
 export { createInterruptionSignal } from "./interruption.js";
 export type { InterruptionControl } from "./interruption.js";
 
 // SSE
-export { writeSSEStream, writeErrorResponse, delay } from "./sse-writer.js";
+export { writeSSEStream, writeErrorResponse, delay, calculateDelay } from "./sse-writer.js";
 export type { StreamOptions } from "./sse-writer.js";
+
+// Chaos
+export { evaluateChaos, applyChaos } from "./chaos.js";
+export type { ChaosAction } from "./types.js";
+
+// Recorder
+export { proxyAndRecord } from "./recorder.js";
+
+// URL
+export { resolveUpstreamUrl } from "./url.js";
+
+// Stream Collapse
+export {
+  collapseOpenAISSE,
+  collapseAnthropicSSE,
+  collapseGeminiSSE,
+  collapseOllamaNDJSON,
+  collapseCohereSSE,
+  collapseBedrockEventStream,
+  collapseStreamingResponse,
+} from "./stream-collapse.js";
+export type { CollapseResult } from "./stream-collapse.js";
 
 // Types
 export type {
@@ -54,6 +116,7 @@ export type {
   ToolCall,
   ToolCallResponse,
   ErrorResponse,
+  EmbeddingResponse,
   FixtureResponse,
   Fixture,
   FixtureFile,
@@ -63,6 +126,12 @@ export type {
   SSEChoice,
   SSEDelta,
   SSEToolCallDelta,
+  ChaosConfig,
   MockServerOptions,
+  StreamingProfile,
+  FixtureOpts,
+  EmbeddingFixtureOpts,
   ToolCallMessage,
+  RecordConfig,
+  RecordProviderKey,
 } from "./types.js";

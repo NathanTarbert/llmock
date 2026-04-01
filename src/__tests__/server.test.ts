@@ -139,6 +139,51 @@ function parseSSEEvents(body: string): unknown[] {
   return events;
 }
 
+// Helper that collects whatever data arrives before the server destroys the
+// connection. Unlike `post()`, it does NOT reject on socket errors — it
+// returns the partial body that was received.
+function postPartial(url: string, body: unknown): Promise<{ body: string; aborted: boolean }> {
+  return new Promise((resolve) => {
+    const data = JSON.stringify(body);
+    const parsed = new URL(url);
+    const chunks: Buffer[] = [];
+    let aborted = false;
+    const req = http.request(
+      {
+        hostname: parsed.hostname,
+        port: parsed.port,
+        path: parsed.pathname,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(data),
+        },
+      },
+      (res) => {
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => {
+          resolve({ body: Buffer.concat(chunks).toString(), aborted });
+        });
+        res.on("error", () => {
+          aborted = true;
+        });
+        res.on("aborted", () => {
+          aborted = true;
+        });
+        res.on("close", () => {
+          resolve({ body: Buffer.concat(chunks).toString(), aborted });
+        });
+      },
+    );
+    req.on("error", () => {
+      aborted = true;
+      resolve({ body: Buffer.concat(chunks).toString(), aborted });
+    });
+    req.write(data);
+    req.end();
+  });
+}
+
 // --- fixtures ---
 
 const textFixture: Fixture = {
@@ -213,6 +258,7 @@ describe("POST /v1/chat/completions", () => {
     const res = await post(`${instance.url}/v1/chat/completions`, {
       model: "gpt-4",
       messages: [{ role: "user", content: "hello" }],
+      stream: true,
     });
 
     expect(res.status).toBe(200);
@@ -242,6 +288,7 @@ describe("POST /v1/chat/completions", () => {
     const res = await post(`${instance.url}/v1/chat/completions`, {
       model: "gpt-4",
       messages: [{ role: "user", content: "weather" }],
+      stream: true,
     });
 
     expect(res.status).toBe(200);
@@ -312,6 +359,7 @@ describe("POST /v1/chat/completions", () => {
     const res = await post(`${instance.url}/v1/chat/completions`, {
       model: "gpt-4",
       messages: [{ role: "user", content: "bigchunk" }],
+      stream: true,
     });
 
     expect(res.status).toBe(200);
@@ -348,6 +396,7 @@ describe("POST /v1/chat/completions", () => {
     const res = await post(`${instance.url}/v1/chat/completions`, {
       model: "gpt-4",
       messages: [{ role: "user", content: "small" }],
+      stream: true,
     });
 
     expect(res.status).toBe(200);
@@ -355,6 +404,73 @@ describe("POST /v1/chat/completions", () => {
     // chunkSize 2, content "ABCD":
     // 1 role + 2 content + 1 finish = 4
     expect(events.length).toBe(4);
+  });
+});
+
+describe("POST /v1/chat/completions (error status codes)", () => {
+  it("error status defaults to 500 when status omitted from ErrorResponse", async () => {
+    const noStatusErrorFixture: Fixture = {
+      match: { userMessage: "no-status-error" },
+      response: {
+        error: { message: "Internal failure", type: "server_error" },
+        // status intentionally omitted
+      },
+    };
+    instance = await createServer([noStatusErrorFixture]);
+    const res = await post(`${instance.url}/v1/chat/completions`, {
+      model: "gpt-4",
+      messages: [{ role: "user", content: "no-status-error" }],
+    });
+
+    expect(res.status).toBe(500);
+    const body = JSON.parse(res.body);
+    expect(body.error.message).toBe("Internal failure");
+  });
+
+  it("error with status 401 returns correct status", async () => {
+    const authErrorFixture: Fixture = {
+      match: { userMessage: "auth-error" },
+      response: {
+        error: { message: "Unauthorized", type: "authentication_error", code: "invalid_api_key" },
+        status: 401,
+      },
+    };
+    instance = await createServer([authErrorFixture]);
+    const res = await post(`${instance.url}/v1/chat/completions`, {
+      model: "gpt-4",
+      messages: [{ role: "user", content: "auth-error" }],
+    });
+
+    expect(res.status).toBe(401);
+    const body = JSON.parse(res.body);
+    expect(body.error.message).toBe("Unauthorized");
+    expect(body.error.type).toBe("authentication_error");
+    expect(body.error.code).toBe("invalid_api_key");
+  });
+
+  it("error with status 503 returns correct status", async () => {
+    const unavailableFixture: Fixture = {
+      match: { userMessage: "service-down" },
+      response: {
+        error: {
+          message: "Service unavailable",
+          type: "server_error",
+          code: "service_unavailable",
+        },
+        status: 503,
+      },
+    };
+    instance = await createServer([unavailableFixture]);
+    const res = await post(`${instance.url}/v1/chat/completions`, {
+      model: "gpt-4",
+      messages: [{ role: "user", content: "service-down" }],
+    });
+
+    expect(res.status).toBe(503);
+    const body = JSON.parse(res.body);
+    expect(body.error.message).toBe("Service unavailable");
+    expect(body.error.type).toBe("server_error");
+    expect(body.error.code).toBe("service_unavailable");
   });
 });
 
@@ -374,6 +490,23 @@ describe("POST /v1/chat/completions (non-streaming)", () => {
     expect(body.object).toBe("chat.completion");
     expect(body.model).toBe("gpt-4");
     expect(body.choices).toHaveLength(1);
+    expect(body.choices[0].message.role).toBe("assistant");
+    expect(body.choices[0].message.content).toBe("Hi there!");
+    expect(body.choices[0].finish_reason).toBe("stop");
+  });
+
+  it("returns JSON when stream field is omitted", async () => {
+    instance = await createServer(allFixtures);
+    const res = await post(`${instance.url}/v1/chat/completions`, {
+      model: "gpt-4",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toBe("application/json");
+
+    const body = JSON.parse(res.body);
+    expect(body.object).toBe("chat.completion");
     expect(body.choices[0].message.role).toBe("assistant");
     expect(body.choices[0].message.content).toBe("Hi there!");
     expect(body.choices[0].finish_reason).toBe("stop");
@@ -656,7 +789,7 @@ describe("journal", () => {
     );
 
     const entry = instance.journal.getLast();
-    expect(entry!.headers["authorization"]).toBe("Bearer sk-test");
+    expect(entry!.headers["authorization"]).toBe("[REDACTED]");
   });
 });
 
@@ -775,6 +908,7 @@ describe("handleCompletions catch handler", () => {
               JSON.stringify({
                 model: "gpt-4",
                 messages: [{ role: "user", content: "slow" }],
+                stream: true,
               }),
             ),
           },
@@ -795,6 +929,7 @@ describe("handleCompletions catch handler", () => {
         JSON.stringify({
           model: "gpt-4",
           messages: [{ role: "user", content: "slow" }],
+          stream: true,
         }),
       );
       req.end();
@@ -806,6 +941,7 @@ describe("handleCompletions catch handler", () => {
     const res = await post(`${instance.url}/v1/chat/completions`, {
       model: "gpt-4",
       messages: [{ role: "user", content: "quick" }],
+      stream: true,
     });
     expect(res.status).toBe(200);
     expect(res.body).toContain("data: [DONE]");
@@ -824,6 +960,7 @@ describe("concurrent request handling", () => {
     const body = {
       model: "gpt-4",
       messages: [{ role: "user", content: "concurrent" }],
+      stream: true,
     };
 
     // Fire 10 requests in parallel
@@ -879,7 +1016,7 @@ describe("header forwarding in journal", () => {
 
     const entry = instance.journal.getLast();
     expect(entry).not.toBeNull();
-    expect(entry!.headers["authorization"]).toBe("Bearer test-key");
+    expect(entry!.headers["authorization"]).toBe("[REDACTED]");
     expect(entry!.headers["x-custom-header"]).toBe("custom-value");
     expect(entry!.headers["content-type"]).toBe("application/json");
   });
@@ -918,7 +1055,7 @@ describe("header forwarding in journal", () => {
 
     const entries = JSON.parse(res.body);
     expect(entries).toHaveLength(1);
-    expect(entries[0].headers["authorization"]).toBe("Bearer api-key-123");
+    expect(entries[0].headers["authorization"]).toBe("[REDACTED]");
     expect(entries[0].headers["x-request-id"]).toBe("req-abc-def");
     expect(entries[0].headers["content-type"]).toBe("application/json");
     expect(entries[0].headers["host"]).toBeDefined();
@@ -938,57 +1075,12 @@ describe("header forwarding in journal", () => {
 
     const entries = instance.journal.getAll();
     expect(entries).toHaveLength(2);
-    expect(entries[0].headers["authorization"]).toBe("Bearer key-one");
-    expect(entries[1].headers["authorization"]).toBe("Bearer key-two");
+    expect(entries[0].headers["authorization"]).toBe("[REDACTED]");
+    expect(entries[1].headers["authorization"]).toBe("[REDACTED]");
   });
 });
 
 describe("stream interruption", () => {
-  // Helper that collects whatever data arrives before the server destroys the
-  // connection. Unlike `post()`, it does NOT reject on socket errors — it
-  // returns the partial body that was received.
-  function postPartial(url: string, body: unknown): Promise<{ body: string; aborted: boolean }> {
-    return new Promise((resolve) => {
-      const data = JSON.stringify(body);
-      const parsed = new URL(url);
-      const chunks: Buffer[] = [];
-      let aborted = false;
-      const req = http.request(
-        {
-          hostname: parsed.hostname,
-          port: parsed.port,
-          path: parsed.pathname,
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Content-Length": Buffer.byteLength(data),
-          },
-        },
-        (res) => {
-          res.on("data", (c: Buffer) => chunks.push(c));
-          res.on("end", () => {
-            resolve({ body: Buffer.concat(chunks).toString(), aborted });
-          });
-          res.on("error", () => {
-            aborted = true;
-          });
-          res.on("aborted", () => {
-            aborted = true;
-          });
-          res.on("close", () => {
-            resolve({ body: Buffer.concat(chunks).toString(), aborted });
-          });
-        },
-      );
-      req.on("error", () => {
-        aborted = true;
-        resolve({ body: Buffer.concat(chunks).toString(), aborted });
-      });
-      req.write(data);
-      req.end();
-    });
-  }
-
   it("truncateAfterChunks stops stream early and records interruption", async () => {
     // Use enough chunks that without truncation, we'd get many more events.
     // With truncateAfterChunks: 2, only 2 chunks should be written before abort.
@@ -1005,6 +1097,7 @@ describe("stream interruption", () => {
     const res = await postPartial(`${instance.url}/v1/chat/completions`, {
       model: "gpt-4",
       messages: [{ role: "user", content: "truncate-me" }],
+      stream: true,
     });
 
     // The body should NOT contain [DONE] since we interrupted
@@ -1053,6 +1146,7 @@ describe("stream interruption", () => {
     await postPartial(`${instance.url}/v1/chat/completions`, {
       model: "gpt-4",
       messages: [{ role: "user", content: "journal-int" }],
+      stream: true,
     });
 
     // Give server a moment to finish the async handler
@@ -1075,6 +1169,7 @@ describe("stream interruption", () => {
     const res = await postPartial(`${instance.url}/v1/chat/completions`, {
       model: "gpt-4",
       messages: [{ role: "user", content: "disconnect-me" }],
+      stream: true,
     });
 
     // Should be a partial stream
@@ -1108,6 +1203,7 @@ describe("stream interruption", () => {
     const res = await postPartial(`${instance.url}/v1/chat/completions`, {
       model: "gpt-4",
       messages: [{ role: "user", content: "tool-truncate" }],
+      stream: true,
     });
 
     // No [DONE] — stream was cut short
@@ -1225,6 +1321,202 @@ describe("stream interruption", () => {
 
     // No response.completed event — stream was cut short
     expect(res.body).not.toContain("response.completed");
+
+    // Journal records interruption
+    await new Promise((r) => setTimeout(r, 50));
+    const entry = instance.journal.getLast();
+    expect(entry).not.toBeNull();
+    expect(entry!.response.interrupted).toBe(true);
+    expect(entry!.response.interruptReason).toBe("truncateAfterChunks");
+  });
+});
+
+// ─── Streaming Physics gap tests ─────────────────────────────────────────────
+
+describe("streamingProfile + truncateAfterChunks combined", () => {
+  it("truncation wins over profile-driven timing", async () => {
+    const fixture: Fixture = {
+      match: { userMessage: "profile-truncate" },
+      response: { content: "ABCDEFGHIJKLMNO" }, // 15 chars, chunkSize 3 => 5 content chunks + role + finish = 7
+      chunkSize: 3,
+      streamingProfile: { ttft: 10, tps: 100 },
+      truncateAfterChunks: 2,
+    };
+    instance = await createServer([fixture]);
+    const res = await postPartial(`${instance.url}/v1/chat/completions`, {
+      model: "gpt-4",
+      messages: [{ role: "user", content: "profile-truncate" }],
+      stream: true,
+    });
+
+    // Stream should have been interrupted — no [DONE]
+    expect(res.body).not.toContain("data: [DONE]");
+
+    // At most 2 SSE data events should have been emitted
+    const events = parseSSEEvents(res.body);
+    expect(events.length).toBeLessThanOrEqual(2);
+
+    // Journal records truncation
+    await new Promise((r) => setTimeout(r, 50));
+    const entry = instance.journal.getLast();
+    expect(entry).not.toBeNull();
+    expect(entry!.response.interrupted).toBe(true);
+    expect(entry!.response.interruptReason).toBe("truncateAfterChunks");
+  });
+});
+
+describe("streamingProfile + disconnectAfterMs combined", () => {
+  it("timeout interrupts a slow streaming profile", async () => {
+    // tps: 5 means 200ms per chunk. With 15 chars / chunkSize 3 = 5 content chunks + role + finish = 7 total.
+    // At 200ms each that's 1400ms for content alone.  disconnectAfterMs: 50 should fire well before completion.
+    const fixture: Fixture = {
+      match: { userMessage: "profile-disconnect" },
+      response: { content: "ABCDEFGHIJKLMNO" },
+      chunkSize: 3,
+      streamingProfile: { ttft: 10, tps: 5 },
+      disconnectAfterMs: 50,
+    };
+    instance = await createServer([fixture]);
+    const res = await postPartial(`${instance.url}/v1/chat/completions`, {
+      model: "gpt-4",
+      messages: [{ role: "user", content: "profile-disconnect" }],
+      stream: true,
+    });
+
+    // Should be a partial stream — no [DONE]
+    expect(res.body).not.toContain("data: [DONE]");
+
+    // Journal records disconnect timeout as the reason
+    await new Promise((r) => setTimeout(r, 100));
+    const entry = instance.journal.getLast();
+    expect(entry).not.toBeNull();
+    expect(entry!.response.interrupted).toBe(true);
+    expect(entry!.response.interruptReason).toBe("disconnectAfterMs");
+  });
+});
+
+describe("truncateAfterChunks: 1 (single chunk)", () => {
+  it("emits exactly 1 chunk before stream ends", async () => {
+    const fixture: Fixture = {
+      match: { userMessage: "one-chunk" },
+      response: { content: "ABCDEF" }, // 6 chars, chunkSize 3 => 2 content chunks normally
+      chunkSize: 3,
+      truncateAfterChunks: 1,
+    };
+    instance = await createServer([fixture]);
+    const res = await postPartial(`${instance.url}/v1/chat/completions`, {
+      model: "gpt-4",
+      messages: [{ role: "user", content: "one-chunk" }],
+      stream: true,
+    });
+
+    // No [DONE] — truncated
+    expect(res.body).not.toContain("data: [DONE]");
+
+    // res.destroy() may discard in-flight data, so we verify through the
+    // journal that the stream was actually truncated after 1 chunk, and that
+    // at most 1 event made it to the client.
+    const events = parseSSEEvents(res.body);
+    expect(events.length).toBeLessThanOrEqual(1);
+
+    // Journal records truncation
+    await new Promise((r) => setTimeout(r, 50));
+    const entry = instance.journal.getLast();
+    expect(entry).not.toBeNull();
+    expect(entry!.response.interrupted).toBe(true);
+    expect(entry!.response.interruptReason).toBe("truncateAfterChunks");
+  });
+});
+
+describe("chunkSize larger than content", () => {
+  it("content arrives in a single chunk when chunkSize exceeds content length", async () => {
+    const fixture: Fixture = {
+      match: { userMessage: "big-chunk" },
+      response: { content: "hi" },
+      chunkSize: 1000,
+    };
+    instance = await createServer([fixture]);
+    const res = await post(`${instance.url}/v1/chat/completions`, {
+      model: "gpt-4",
+      messages: [{ role: "user", content: "big-chunk" }],
+      stream: true,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain("data: [DONE]");
+
+    // Parse events: should be role + 1 content chunk + finish = 3 events
+    const events = parseSSEEvents(res.body);
+    expect(events.length).toBe(3);
+
+    // The single content chunk should contain the full content
+    const contentEvent = events[1] as {
+      choices: [{ delta: { content?: string } }];
+    };
+    expect(contentEvent.choices[0].delta.content).toBe("hi");
+  });
+});
+
+describe("empty content streaming", () => {
+  it("stream completes with role + finish chunks and no content chunks", async () => {
+    const fixture: Fixture = {
+      match: { userMessage: "empty-stream" },
+      response: { content: "" },
+    };
+    instance = await createServer([fixture]);
+    const res = await post(`${instance.url}/v1/chat/completions`, {
+      model: "gpt-4",
+      messages: [{ role: "user", content: "empty-stream" }],
+      stream: true,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain("data: [DONE]");
+
+    // Only role chunk + finish chunk = 2 events (no content chunks for empty string)
+    const events = parseSSEEvents(res.body);
+    expect(events.length).toBe(2);
+
+    // First event is the role chunk
+    const roleEvent = events[0] as {
+      choices: [{ delta: { role?: string; content?: string } }];
+    };
+    expect(roleEvent.choices[0].delta.role).toBe("assistant");
+
+    // Second event is the finish chunk
+    const finishEvent = events[1] as {
+      choices: [{ finish_reason: string | null }];
+    };
+    expect(finishEvent.choices[0].finish_reason).toBe("stop");
+  });
+});
+
+describe("Anthropic streaming with truncateAfterChunks", () => {
+  it("truncates Anthropic SSE events correctly", async () => {
+    // Claude streaming events: message_start, content_block_start, N content_block_delta,
+    // content_block_stop, message_delta, message_stop
+    // For "ABCDEFGHIJKLMNO" with chunkSize 3 => 5 deltas => 10 total events
+    // truncateAfterChunks: 3 should cut before message_stop
+    const fixture: Fixture = {
+      match: { userMessage: "anthropic-trunc-test" },
+      response: { content: "ABCDEFGHIJKLMNO" },
+      chunkSize: 3,
+      latency: 5,
+      truncateAfterChunks: 3,
+    };
+    instance = await createServer([fixture]);
+    const res = await postPartial(`${instance.url}/v1/messages`, {
+      model: "claude-3-5-sonnet-20241022",
+      max_tokens: 1024,
+      stream: true,
+      messages: [{ role: "user", content: "anthropic-trunc-test" }],
+    });
+
+    // No message_stop — stream was cut short
+    expect(res.body).not.toContain('"message_stop"');
+
+    // Should have some Anthropic SSE events but not the full set
+    expect(res.body).toContain("event: message_start");
 
     // Journal records interruption
     await new Promise((r) => setTimeout(r, 50));
